@@ -1,2 +1,173 @@
 # CodexResetGuard
-Codex 주간 사용량과 초기화권을 안전하게 관리하는 Windows 트레이 앱
+
+CodexResetGuard는 Codex의 주간 사용량을 확인하고, 설정한 잔여량에 도달하면
+보유한 초기화권을 한 번만 안전하게 사용하도록 돕는 Windows 트레이 앱입니다.
+
+[Windows용 설치 파일 다운로드](../../releases/latest/download/CodexResetGuard-Setup-x64.exe)
+· [설치 없는 Portable ZIP](../../releases/latest/download/CodexResetGuard-Portable-x64.zip)
+· [SHA-256 확인값](../../releases/latest/download/SHA256SUMS.txt)
+
+이 프로젝트는 OpenAI가 제작·지원·보증하는 공식 제품이 아닙니다. Codex나
+OpenAI 로고를 포함하지 않으며, Codex 인증 파일을 직접 읽지 않습니다.
+
+![CodexResetGuard 주간 사용량 화면](docs/CodexResetGuard.png)
+
+## 만든 이유
+
+주간 한도와 초기화권을 매번 직접 확인하고 적절한 시점에 사용하는 번거로움을
+줄이기 위해 만들었습니다. 앱을 켜 두면 트레이에서 남은 주간 사용량과 보유
+초기화권을 확인할 수 있고, 사용자가 정한 기준에 도달했을 때만 동작합니다.
+
+## 사용 전 준비
+
+- 64비트 Windows 10 버전 1809 이상
+- 정상적으로 실행되고 로그인된 Codex
+- 설치 파일을 받을 인터넷 연결
+
+설치 파일에는 필요한 .NET 런타임이 포함되므로 .NET SDK, Visual Studio,
+Git을 따로 설치할 필요가 없습니다. Codex 자체는 포함하지 않습니다.
+
+## 가장 쉬운 설치 방법
+
+1. 위의 **Windows용 설치 파일 다운로드**를 누릅니다.
+2. 내려받은 `CodexResetGuard-Setup-x64.exe`를 실행합니다.
+3. Windows에서 `PC 보호` 또는 `알 수 없는 게시자` 경고가 표시되면 파일을
+   이 저장소의 Release에서 받았는지 확인합니다.
+4. 확인했다면 **추가 정보 → 실행**을 선택합니다.
+5. 설치 창에서 **설치**를 누릅니다. 관리자 권한은 필요하지 않습니다.
+6. 설치가 끝나면 CodexResetGuard가 자동으로 실행됩니다.
+
+유료 코드 서명을 사용하지 않기 때문에 SmartScreen 경고가 표시될 수 있습니다.
+다운로드 출처를 확인할 수 없다면 실행하지 마세요. 필요한 경우 함께 제공되는
+`SHA256SUMS.txt`와 다운로드한 파일의 SHA-256 값을 비교할 수 있습니다.
+
+설치 파일과 `SHA256SUMS.txt`를 같은 폴더에 받은 뒤 그 폴더에서 PowerShell을
+열고 아래 명령을 실행합니다. 표시된 값이 `SHA256SUMS.txt`의 설치 파일 행과
+같은지 확인하세요.
+
+```powershell
+Get-FileHash .\CodexResetGuard-Setup-x64.exe -Algorithm SHA256
+```
+
+## 처음 실행할 때
+
+1. 앱이 로컬 Codex 연결을 확인하고 주간 잔여량을 읽습니다.
+2. 초기화권을 사용할 잔여량 기준과 확인 주기를 정합니다.
+3. 필요하면 **Windows 로그인 시 자동 실행**을 켭니다.
+4. 안내 문구를 읽고 **자동 초기화**를 켠 뒤 저장합니다.
+
+자동 초기화를 처음 켤 때는 확인 창이 한 번 더 표시됩니다. 현재 주간 잔여량이
+이미 기준 이하라면 저장 직후 초기화권 1개가 실제로 사용될 수 있습니다.
+
+자동 초기화가 꺼져 있으면 사용량만 확인하고 초기화권을 사용하지 않습니다.
+켜져 있으면 조건 충족 시 실제 초기화권을 사용할 수 있습니다.
+
+## 평소 사용 방법
+
+- 창을 닫으면 종료되지 않고 알림 영역으로 숨겨집니다.
+- 트레이 아이콘을 더블클릭하면 창이 다시 열립니다.
+- 트레이 메뉴에서 지금 새로고침, 자동 시작 변경, 종료를 선택할 수 있습니다.
+- 완전히 종료하려면 창의 닫기 버튼이 아니라 트레이 메뉴의 **종료**를 누릅니다.
+
+## 설치 없이 사용하기
+
+1. `CodexResetGuard-Portable-x64.zip`을 다운로드합니다.
+2. ZIP 파일을 마우스 오른쪽 버튼으로 누르고 **압축 풀기**를 선택합니다.
+3. 압축이 완전히 풀린 폴더 안의 `CodexResetGuard.exe`를 실행합니다.
+
+ZIP 안의 EXE만 따로 꺼내면 실행되지 않습니다. 폴더 안의 파일을 함께 보관해야
+합니다. Portable 버전의 위치를 옮길 때는 Windows 자동 시작을 먼저 끈 뒤,
+옮긴 위치에서 다시 켜세요.
+
+Portable 버전의 EXE도 유료 코드 서명을 사용하지 않으므로 처음 실행할 때 같은
+SmartScreen 경고가 표시될 수 있습니다.
+
+## 업데이트와 삭제
+
+새 버전 설치 파일을 받아 다시 실행하면 기존 설치 위치에 업데이트됩니다. 사용자
+설정과 안전 상태는 `%LocalAppData%\CodexResetGuard`에 그대로 유지됩니다.
+
+삭제하려면 **Windows 설정 → 앱 → 설치된 앱 → CodexResetGuard → 제거**를
+선택합니다. 제거 프로그램은 이 앱이 소유한 자동 시작 항목만 확인해서 지우며,
+다른 프로그램의 같은 이름 항목은 건드리지 않습니다. 안전 기록과 사용자 설정은
+실수로 보호 상태를 초기화하지 않도록 자동 삭제하지 않습니다.
+
+## 사용량 확인이 토큰을 쓰나요?
+
+아니요. 사용량 확인은 모델에 프롬프트를 보내거나 답변을 생성하지 않습니다.
+로컬 `codex app-server`의 `account/rateLimits/read`를 호출해 사용량 숫자만 읽기
+때문에 확인 주기마다 Codex 생성 토큰이 소모되지 않습니다.
+
+자동 초기화 조건이 충족되면 `account/rateLimitResetCredit/consume`을 호출합니다.
+이 호출도 모델 토큰을 생성하지 않지만, 보유한 초기화권 1개를 실제로 사용할 수
+있습니다.
+
+## 동작 원리
+
+1. 설치된 `codex.exe`를 찾아 로컬 app-server를 시작합니다.
+2. `initialize`와 `initialized`로 연결을 준비합니다.
+3. `account/rateLimits/read`에서 주간 한도와 초기화권 정보를 읽습니다.
+4. 10,080분 길이의 창을 주간 한도로 엄격하게 식별합니다.
+5. 잔여량이 설정 기준 이하이고 사용할 수 있는 초기화권이 확인되면, 같은 주간
+   구간에서 중복되지 않도록 로컬 상태를 먼저 저장합니다.
+6. 고정된 형식의 consume 요청을 보내고 결과를 다시 조회합니다.
+
+응답이 누락되거나 모호한 경우, 지원하지 않는 Codex 버전인 경우, 상태 파일이
+손상된 경우에는 초기화권을 사용하지 않고 안전하게 차단합니다.
+
+## 개인정보와 보안
+
+- Codex의 `auth.json`, 토큰, 쿠키를 직접 읽거나 저장하지 않습니다.
+- 인증은 사용자가 로그인한 로컬 `codex app-server`에 맡깁니다.
+- 초기화권 식별자가 일시적으로 필요할 때는 Windows DPAPI CurrentUser로
+  보호합니다.
+- 로그에는 허용된 상태 코드와 숫자만 기록합니다.
+- 이메일, 계정 식별자, 초기화권 ID, 원본 프로토콜, 사용자 폴더 경로를 로그에
+  남기지 않습니다.
+- 설정과 상태는 현재 사용자의 `%LocalAppData%\CodexResetGuard`에 저장합니다.
+- 임의 JSON-RPC 메서드를 보낼 수 있는 기능은 제공하지 않습니다.
+
+## 문제가 생겼을 때
+
+### Codex를 찾을 수 없다고 나옵니다
+
+Codex가 설치되어 있고 정상적으로 로그인되는지 먼저 확인하세요. 사용자 지정
+`codex.exe`를 사용한다면 앱 설정에서 해당 파일의 전체 경로를 지정할 수 있습니다.
+자동 초기화는 신뢰할 수 있는 것으로 확인된 실행 파일에서만 동작합니다.
+
+### 자동 초기화가 안전 차단됐습니다
+
+지원하지 않는 응답이나 불확실한 처리 결과가 발견되면 자동으로 다시 시도하지 않을
+수 있습니다. 먼저 자동 초기화를 끄고 앱과 Codex를 최신 상태로 확인하세요. 안전
+차단 파일을 이유 확인 없이 삭제하면 같은 초기화권 요청이 중복될 수 있습니다.
+
+### Windows가 실행을 막습니다
+
+파일명이 `CodexResetGuard-Setup-x64.exe`인지, 이 저장소의 Release에서
+다운로드했는지 확인하세요. 출처가 다르거나 해시가 일치하지 않으면 실행하지 마세요.
+
+## 소스에서 빌드하기
+
+.NET 8.0.423 SDK가 필요합니다.
+
+```powershell
+dotnet restore CodexResetGuard.sln --locked-mode
+dotnet build CodexResetGuard.sln -c Release --no-restore
+dotnet test CodexResetGuard.sln -c Release --no-build
+dotnet format CodexResetGuard.sln --no-restore --verify-no-changes
+```
+
+Windows 설치 파일과 Portable ZIP을 만들려면 Inno Setup 6을 설치한 뒤 실행합니다.
+
+```powershell
+winget install --id JRSoftware.InnoSetup --exact
+.\scripts\build-release.ps1
+```
+
+완성된 파일은 `artifacts\release`에 생성됩니다.
+
+## 라이선스
+
+CodexResetGuard의 소스 코드는 [Apache License 2.0](LICENSE)으로 배포합니다.
+자체 포함 Windows 패키지에는 사용된 .NET 런타임 라이선스와 제3자 고지문도 함께
+포함됩니다.

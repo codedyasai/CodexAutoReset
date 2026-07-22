@@ -1,0 +1,19 @@
+bin/
+obj/
+.vs/
+.vscode/
+TestResults/
+artifacts/
+*.user
+*.suo
+*.nupkg
+*.snupkg
+
+# Local runtime state must never be committed.
+settings.json
+state.json
+live-state.json
+live-safety-block.json
+live-safety-block.json.tmp
+instance.lock
+Logs/

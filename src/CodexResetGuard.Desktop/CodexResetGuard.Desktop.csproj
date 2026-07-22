@@ -1,0 +1,76 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>CodexResetGuard</AssemblyName>
+    <RootNamespace>CodexResetGuard.Desktop</RootNamespace>
+    <ApplicationIcon>Assets\CodexResetGuard.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\CodexResetGuard.Core\CodexResetGuard.Core.csproj" />
+    <ProjectReference Include="..\CodexResetGuard.Runtime\CodexResetGuard.Runtime.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Resource Include="Assets\CodexResetGuard.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\..\LICENSE"
+          Link="CodexResetGuard-LICENSE.txt"
+          TargetPath="CodexResetGuard-LICENSE.txt"
+          CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!--
+    A self-contained publish redistributes the resolved runtime packs, not the SDK
+    installation itself. Resolve notice sources from those exact packs so an SDK
+    upgrade cannot silently publish an unrelated SDK license.
+  -->
+  <Target Name="AddSelfContainedRuntimeNotices"
+          BeforeTargets="ComputeFilesToPublish"
+          DependsOnTargets="ResolveFrameworkReferences"
+          Condition="'$(SelfContained)' == 'true'">
+    <ItemGroup>
+      <_NetCoreRuntimeReference Include="@(ResolvedFrameworkReference)"
+                                Condition="'%(ResolvedFrameworkReference.Identity)' == 'Microsoft.NETCore.App'" />
+      <_WindowsDesktopRuntimeReference Include="@(ResolvedFrameworkReference)"
+                                       Condition="'%(ResolvedFrameworkReference.Identity)' == 'Microsoft.WindowsDesktop.App'" />
+    </ItemGroup>
+
+    <PropertyGroup>
+      <_NetCoreRuntimePackPath>@(_NetCoreRuntimeReference->'%(RuntimePackPath)')</_NetCoreRuntimePackPath>
+      <_WindowsDesktopRuntimePackPath>@(_WindowsDesktopRuntimeReference->'%(RuntimePackPath)')</_WindowsDesktopRuntimePackPath>
+    </PropertyGroup>
+
+    <Error Condition="'$(_NetCoreRuntimePackPath)' == ''"
+           Text="The resolved Microsoft.NETCore.App runtime pack is required for self-contained publish." />
+    <Error Condition="'$(_WindowsDesktopRuntimePackPath)' == ''"
+           Text="The resolved Microsoft.WindowsDesktop.App runtime pack is required for self-contained publish." />
+    <Error Condition="!Exists('$(_NetCoreRuntimePackPath)\LICENSE.TXT')"
+           Text="The resolved .NET runtime pack license is required for self-contained publish." />
+    <Error Condition="!Exists('$(_NetCoreRuntimePackPath)\THIRD-PARTY-NOTICES.TXT')"
+           Text="The resolved .NET runtime pack third-party notices are required for self-contained publish." />
+    <Error Condition="!Exists('$(_WindowsDesktopRuntimePackPath)\LICENSE')"
+           Text="The resolved Windows Desktop runtime pack license is required for self-contained publish." />
+
+    <ItemGroup>
+      <ResolvedFileToPublish Include="$(_NetCoreRuntimePackPath)\LICENSE.TXT">
+        <RelativePath>dotnet-runtime-LICENSE.txt</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+        <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+      </ResolvedFileToPublish>
+      <ResolvedFileToPublish Include="$(_NetCoreRuntimePackPath)\THIRD-PARTY-NOTICES.TXT">
+        <RelativePath>dotnet-runtime-THIRD-PARTY-NOTICES.txt</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+        <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+      </ResolvedFileToPublish>
+      <ResolvedFileToPublish Include="$(_WindowsDesktopRuntimePackPath)\LICENSE">
+        <RelativePath>dotnet-windowsdesktop-LICENSE.txt</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+        <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
+</Project>

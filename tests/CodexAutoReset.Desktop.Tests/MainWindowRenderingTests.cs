@@ -1,5 +1,9 @@
 using System.IO;
 using System.Runtime.ExceptionServices;
+using System.Windows;
+using System.Windows.Automation;
+using System.Windows.Controls;
+using System.Windows.Media;
 using CodexAutoReset.Core;
 using CodexAutoReset.Desktop;
 using CodexAutoReset.Runtime;
@@ -48,6 +52,34 @@ public sealed class MainWindowRenderingTests
                 window = new MainWindow(viewModel);
                 window.Show();
                 window.UpdateLayout();
+
+                var connectionCard = (Border)window.FindName("CodexConnectionCard");
+                var usageCard = (Border)window.FindName("UsageOverviewCard");
+                var settingsCard = (Border)window.FindName("SettingsCard");
+                var refreshButton = (Button)window.FindName("RefreshButton");
+                var saveButton = (Button)window.FindName("SaveButton");
+                var buttons = FindVisualChildren<Button>(window).ToArray();
+
+                Assert.AreEqual(0, Grid.GetRow(connectionCard));
+                Assert.AreEqual(1, Grid.GetRow(usageCard));
+                Assert.AreEqual(2, Grid.GetRow(settingsCard));
+                Assert.IsTrue(settingsCard.IsAncestorOf(saveButton));
+                Assert.AreEqual("새로고침", refreshButton.ToolTip);
+                Assert.AreEqual("주간 사용량 새로고침", AutomationProperties.GetName(refreshButton));
+                Assert.AreEqual(
+                    "\uE72C",
+                    ((TextBlock)refreshButton.Content).Text);
+                Assert.AreEqual(
+                    1,
+                    buttons.Count(button =>
+                        AutomationProperties.GetName(button).Contains(
+                            "새로고침",
+                            StringComparison.Ordinal)));
+                Assert.IsFalse(buttons.Any(button =>
+                    string.Equals(GetButtonText(button), "지금 새로고침", StringComparison.Ordinal)));
+                Assert.IsFalse(buttons.Any(button =>
+                    string.Equals(GetButtonText(button), "창 숨기기", StringComparison.Ordinal)));
+
                 completed = window.IsLoaded && window.ActualWidth > 0 && window.ActualHeight > 0;
             }
             catch (Exception exception)
@@ -82,6 +114,31 @@ public sealed class MainWindowRenderingTests
 
         Assert.IsTrue(completed, "Window did not complete its initial layout.");
     }
+
+    private static IEnumerable<T> FindVisualChildren<T>(DependencyObject root)
+        where T : DependencyObject
+    {
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
+        {
+            var child = VisualTreeHelper.GetChild(root, index);
+            if (child is T match)
+            {
+                yield return match;
+            }
+
+            foreach (var descendant in FindVisualChildren<T>(child))
+            {
+                yield return descendant;
+            }
+        }
+    }
+
+    private static string? GetButtonText(Button button) => button.Content switch
+    {
+        string text => text,
+        TextBlock textBlock => textBlock.Text,
+        _ => null,
+    };
 
     private sealed class NoOpCycleExecutor : IGuardCycleExecutor
     {

@@ -124,15 +124,15 @@
       "codex-auto-reset": {
         "type": "Project",
         "dependencies": {
-          "CodexAutoReset.AppServer": "[0.2.1, )",
-          "CodexAutoReset.Core": "[0.2.1, )",
-          "CodexAutoReset.Runtime": "[0.2.1, )"
+          "CodexAutoReset.AppServer": "[0.2.2, )",
+          "CodexAutoReset.Core": "[0.2.2, )",
+          "CodexAutoReset.Runtime": "[0.2.2, )"
         }
       },
       "codexautoreset.appserver": {
         "type": "Project",
         "dependencies": {
-          "CodexAutoReset.Core": "[0.2.1, )"
+          "CodexAutoReset.Core": "[0.2.2, )"
         }
       },
       "codexautoreset.core": {
@@ -141,8 +141,8 @@
       "codexautoreset.runtime": {
         "type": "Project",
         "dependencies": {
-          "CodexAutoReset.AppServer": "[0.2.1, )",
-          "CodexAutoReset.Core": "[0.2.1, )"
+          "CodexAutoReset.AppServer": "[0.2.2, )",
+          "CodexAutoReset.Core": "[0.2.2, )"
         }
       }
     }

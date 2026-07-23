@@ -35,7 +35,7 @@ public sealed class MainWindowViewModelTests
     }
 
     [TestMethod]
-    public async Task CodexExecutableSelection_PersistsAndReturnsToAutomaticWithoutEnablingAutomation()
+    public async Task CodexExecutableSelection_PersistsOnlyPathAndReturnsToAutomatic()
     {
         using var directory = new TemporaryDirectory();
         var paths = RuntimePaths.ForTesting(directory.Path);
@@ -51,7 +51,12 @@ public sealed class MainWindowViewModelTests
             settingsStore,
             new StartupService(new MemoryRegistryStore()),
             monitor,
-            GuardSettings.Default);
+            GuardSettings.Default)
+        {
+            ThresholdText = "99",
+            PollIntervalText = "41",
+            AutomationEnabled = true,
+        };
 
         var selected = viewModel.TrySetCodexExecutablePath(
             codexPath,
@@ -66,20 +71,105 @@ public sealed class MainWindowViewModelTests
                 directory.Path,
                 StringComparison.OrdinalIgnoreCase));
 
-        await viewModel.SaveAsync();
+        Assert.IsTrue(await viewModel.SaveCodexExecutablePathAsync());
 
         var selectedSettings = await settingsStore.LoadAsync(CancellationToken.None);
         Assert.AreEqual(codexPath, selectedSettings.CodexExecutablePath);
         Assert.IsFalse(selectedSettings.AutomationEnabled);
+        Assert.AreEqual(GuardSettings.Default.RemainingThresholdPercent, selectedSettings.RemainingThresholdPercent);
+        Assert.AreEqual(GuardSettings.Default.PollIntervalMinutes, selectedSettings.PollIntervalMinutes);
+        Assert.AreEqual("99", viewModel.ThresholdText);
+        Assert.AreEqual("41", viewModel.PollIntervalText);
+        Assert.IsTrue(viewModel.AutomationEnabled);
+        Assert.AreEqual(
+            "연결 경로를 저장했습니다. 다음 확인부터 사용합니다.",
+            viewModel.CodexConnectionStatus);
 
         viewModel.UseAutomaticCodexExecutablePath();
-        await viewModel.SaveAsync();
+        Assert.IsTrue(await viewModel.SaveCodexExecutablePathAsync());
 
         var automaticSettings = await settingsStore.LoadAsync(CancellationToken.None);
         Assert.IsNull(automaticSettings.CodexExecutablePath);
         Assert.IsFalse(automaticSettings.AutomationEnabled);
         Assert.IsFalse(viewModel.HasCustomCodexExecutablePath);
         Assert.AreEqual("연결 방식 · 자동 찾기", viewModel.CodexExecutableModeText);
+    }
+
+    [TestMethod]
+    public async Task CodexAutomaticSelection_ConflictRestoresPersistedCustomPath()
+    {
+        using var directory = new TemporaryDirectory();
+        var paths = RuntimePaths.ForTesting(directory.Path);
+        var settingsStore = new JsonSettingsStore(paths.SettingsFile);
+        var codexPath = System.IO.Path.Combine(directory.Path, "codex.exe");
+        await File.WriteAllBytesAsync(codexPath, [0]);
+        var initialSettings = GuardSettings.Default with
+        {
+            CodexExecutablePath = codexPath,
+        };
+        await settingsStore.SaveAsync(initialSettings, CancellationToken.None);
+        await using var monitor = new GuardMonitorService(
+            settingsStore,
+            new ImmediateCycleExecutor(),
+            initialSettings);
+        var viewModel = new MainWindowViewModel(
+            settingsStore,
+            new StartupService(new MemoryRegistryStore()),
+            monitor,
+            initialSettings);
+        var externallyChanged = initialSettings with
+        {
+            RemainingThresholdPercent = 42,
+        };
+        await settingsStore.SaveAsync(externallyChanged, CancellationToken.None);
+
+        viewModel.UseAutomaticCodexExecutablePath();
+        Assert.IsFalse(viewModel.HasCustomCodexExecutablePath);
+
+        Assert.IsFalse(await viewModel.SaveCodexExecutablePathAsync());
+
+        Assert.IsTrue(viewModel.HasCustomCodexExecutablePath);
+        Assert.AreEqual(codexPath, viewModel.ConfiguredCodexExecutablePath);
+        Assert.AreEqual(externallyChanged, await settingsStore.LoadAsync(CancellationToken.None));
+        Assert.IsTrue(viewModel.CanEditCodexConnection);
+        StringAssert.Contains(viewModel.CodexConnectionStatus, "다시 선택");
+    }
+
+    [TestMethod]
+    public async Task CodexExecutableSave_DisablesConnectionControlsWhileWaiting()
+    {
+        using var directory = new TemporaryDirectory();
+        var paths = RuntimePaths.ForTesting(directory.Path);
+        var settingsStore = new JsonSettingsStore(paths.SettingsFile);
+        await settingsStore.SaveAsync(GuardSettings.Default, CancellationToken.None);
+        var codexPath = System.IO.Path.Combine(directory.Path, "codex.exe");
+        await File.WriteAllBytesAsync(codexPath, [0]);
+        var executor = new BlockingCycleExecutor();
+        await using var monitor = new GuardMonitorService(
+            settingsStore,
+            executor,
+            GuardSettings.Default);
+        var viewModel = new MainWindowViewModel(
+            settingsStore,
+            new StartupService(new MemoryRegistryStore()),
+            monitor,
+            GuardSettings.Default);
+        var cycleTask = monitor.RefreshAsync();
+        await executor.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.IsTrue(viewModel.TrySetCodexExecutablePath(codexPath, out _));
+
+        var saveTask = viewModel.SaveCodexExecutablePathAsync();
+
+        Assert.IsFalse(saveTask.IsCompleted);
+        Assert.IsFalse(viewModel.CanEditCodexConnection);
+
+        executor.Release.TrySetResult();
+        await cycleTask;
+        Assert.IsTrue(await saveTask);
+        Assert.IsTrue(viewModel.CanEditCodexConnection);
+        Assert.AreEqual(
+            codexPath,
+            (await settingsStore.LoadAsync(CancellationToken.None)).CodexExecutablePath);
     }
 
     [TestMethod]

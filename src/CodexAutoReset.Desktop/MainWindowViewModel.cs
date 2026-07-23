@@ -28,6 +28,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private string lastCheckedStatus = "확인 전";
     private string overallStatus = "사용량을 확인할 예정입니다.";
     private string saveStatus = string.Empty;
+    private string codexConnectionStatus = string.Empty;
+    private bool isCodexConnectionSaving;
     private StartupStatus? actualStartupStatus;
 
     public MainWindowViewModel(
@@ -164,6 +166,14 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         private set => SetField(ref saveStatus, value);
     }
 
+    public string CodexConnectionStatus
+    {
+        get => codexConnectionStatus;
+        private set => SetField(ref codexConnectionStatus, value);
+    }
+
+    public bool CanEditCodexConnection => !isCodexConnectionSaving;
+
     public MonitorSnapshot CurrentSnapshot => monitor.CurrentSnapshot;
 
     public void RequestRefresh() => monitor.RequestRefresh();
@@ -180,6 +190,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         {
             errorMessage = "파일 이름이 codex.exe인 실제 실행 파일을 선택하세요.";
             SaveStatus = errorMessage;
+            CodexConnectionStatus = errorMessage;
             return false;
         }
 
@@ -195,18 +206,107 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         {
             errorMessage = "선택한 실행 파일 경로를 안전하게 확인할 수 없습니다.";
             SaveStatus = errorMessage;
+            CodexConnectionStatus = errorMessage;
             return false;
         }
 
         errorMessage = string.Empty;
-        SaveStatus = "Codex 실행 파일을 선택했습니다. 아래에서 설정을 저장하세요.";
+        CodexConnectionStatus = "Codex 연결 경로를 저장하는 중입니다.";
         return true;
     }
 
     public void UseAutomaticCodexExecutablePath()
     {
         SetCodexExecutablePath(null);
-        SaveStatus = "Codex를 자동으로 찾도록 변경했습니다. 아래에서 설정을 저장하세요.";
+        CodexConnectionStatus = "자동 찾기 설정을 저장하는 중입니다.";
+    }
+
+    public async Task<bool> SaveCodexExecutablePathAsync()
+    {
+        if (Volatile.Read(ref stopping) != 0)
+        {
+            return false;
+        }
+
+        if (isCodexConnectionSaving)
+        {
+            CodexConnectionStatus = "Codex 연결 설정을 저장 중입니다.";
+            return false;
+        }
+
+        SetCodexConnectionSaving(true);
+        var gateAcquired = false;
+        try
+        {
+            if (!await saveGate.WaitAsync(0))
+            {
+                RestorePersistedCodexExecutablePath();
+                CodexConnectionStatus = "다른 설정을 저장 중입니다. 잠시 후 다시 시도하세요.";
+                return false;
+            }
+
+            gateAcquired = true;
+            if (Volatile.Read(ref stopping) != 0)
+            {
+                RestorePersistedCodexExecutablePath();
+                return false;
+            }
+
+            var baselineSettings = persistedSettings;
+            try
+            {
+                var updatedSettings = await monitor.SetCodexExecutablePathAsync(
+                    settingsUpdateService,
+                    baselineSettings,
+                    codexExecutablePath,
+                    CancellationToken.None);
+                MergeFreshPersistedSettings(baselineSettings, updatedSettings);
+                SaveStatus = "Codex 연결 설정을 저장했습니다.";
+                CodexConnectionStatus = "연결 경로를 저장했습니다. 다음 확인부터 사용합니다.";
+                return true;
+            }
+            catch (SettingsConflictException exception)
+            {
+                MergeFreshPersistedSettings(
+                    baselineSettings,
+                    exception.CurrentSettings);
+                SaveStatus = "설정 파일이 다시 변경되어 Codex 연결 설정을 저장하지 않았습니다.";
+                RestorePersistedCodexExecutablePath();
+                CodexConnectionStatus = "다른 설정 변경을 먼저 반영했습니다. 연결 경로를 다시 선택하세요.";
+            }
+            catch (SettingsException exception)
+            {
+                SaveStatus = $"Codex 연결 설정 저장 실패: {ToFriendlySettingsFailure(exception.ReasonCode)}";
+                RestorePersistedCodexExecutablePath();
+                CodexConnectionStatus = SaveStatus;
+            }
+            catch (Exception exception) when (
+                exception is IOException
+                    or UnauthorizedAccessException
+                    or System.Security.SecurityException)
+            {
+                SaveStatus = "Codex 연결 설정을 안전하게 저장하지 못했습니다.";
+                RestorePersistedCodexExecutablePath();
+                CodexConnectionStatus = SaveStatus;
+            }
+            catch (Exception)
+            {
+                SaveStatus = "예상하지 못한 로컬 오류로 Codex 연결 설정을 저장하지 않았습니다.";
+                RestorePersistedCodexExecutablePath();
+                CodexConnectionStatus = SaveStatus;
+            }
+
+            return false;
+        }
+        finally
+        {
+            if (gateAcquired)
+            {
+                saveGate.Release();
+            }
+
+            SetCodexConnectionSaving(false);
+        }
     }
 
     public async Task SaveAsync(bool automationEnableConfirmed = false)
@@ -461,6 +561,17 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         monitor.RequestRefresh();
     }
 
+    private void RestorePersistedCodexExecutablePath() =>
+        SetCodexExecutablePath(persistedSettings.CodexExecutablePath);
+
+    private void SetCodexConnectionSaving(bool value)
+    {
+        if (SetField(ref isCodexConnectionSaving, value))
+        {
+            OnPropertyChanged(nameof(CanEditCodexConnection));
+        }
+    }
+
     private void MergeFreshPersistedSettings(
         GuardSettings baselineSettings,
         GuardSettings freshSettings)
@@ -571,7 +682,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             return snapshot.StatusCode switch
             {
                 "executable_not_found" =>
-                    "Codex CLI를 찾지 못했습니다. CLI 설치를 확인하거나 아래 Codex 연결에서 codex.exe를 선택하세요.",
+                    "Codex CLI를 찾지 못했습니다. CLI 설치를 확인하거나 Codex 연결에서 codex.exe를 선택하세요.",
                 "executable_became_unavailable" =>
                     "Codex가 업데이트되어 실행 경로가 바뀐 것 같습니다. 잠시 후 다시 확인하세요.",
                 "start_failed" =>
@@ -609,7 +720,14 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         "threshold_out_of_range" => "잔여량 임계값은 1~100%로 설정하세요.",
         "poll_interval_out_of_range" => "조회 주기는 1~60분으로 설정하세요.",
         "codex_executable_path_invalid" => "선택한 codex.exe를 찾을 수 없습니다. 다시 선택하세요.",
-        _ => $"설정값이 올바르지 않습니다: {code}",
+        "settings_access_denied" => "설정 파일에 접근할 수 없습니다. 앱 권한과 보안 프로그램을 확인하세요.",
+        "settings_io_error" => "설정 파일을 읽거나 쓸 수 없습니다. 잠시 후 다시 시도하세요.",
+        "settings_invalid_json" or "settings_empty" or "settings_schema_unsupported" =>
+            "설정 파일이 손상되었거나 지원되지 않습니다.",
+        "settings_path_invalid" or "settings_path_forbidden" =>
+            "설정 파일 위치를 안전하게 사용할 수 없습니다.",
+        "settings_too_large" => "설정 파일 크기가 비정상적으로 큽니다.",
+        _ => "설정값을 저장할 수 없습니다.",
     };
 
     private void SetCodexExecutablePath(string? path)

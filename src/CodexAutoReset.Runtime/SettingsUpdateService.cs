@@ -36,6 +36,31 @@ public sealed class SettingsUpdateService
     public Task<GuardSettings> LoadAsync(CancellationToken cancellationToken = default) =>
         loadSettingsAsync(cancellationToken);
 
+    public async Task<GuardSettings> SaveCodexExecutablePathAsync(
+        GuardSettings previousSettings,
+        string? codexExecutablePath,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(previousSettings);
+        JsonSettingsStore.Validate(previousSettings);
+
+        var currentSettings = await loadSettingsAsync(cancellationToken)
+            .ConfigureAwait(false);
+        JsonSettingsStore.Validate(currentSettings);
+        if (currentSettings != previousSettings)
+        {
+            throw new SettingsConflictException(currentSettings);
+        }
+
+        var updatedSettings = currentSettings with
+        {
+            CodexExecutablePath = codexExecutablePath,
+        };
+        JsonSettingsStore.Validate(updatedSettings);
+        await saveSettingsAsync(updatedSettings, cancellationToken).ConfigureAwait(false);
+        return updatedSettings;
+    }
+
     public async Task SaveAsync(
         GuardSettings previousSettings,
         GuardSettings newSettings,

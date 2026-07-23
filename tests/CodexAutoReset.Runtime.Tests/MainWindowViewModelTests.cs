@@ -1,3 +1,4 @@
+using CodexAutoReset.AppServer;
 using CodexAutoReset.Core;
 using CodexAutoReset.Desktop;
 using CodexAutoReset.Runtime;
@@ -31,6 +32,81 @@ public sealed class MainWindowViewModelTests
         Assert.AreEqual("자동 시작 상태를 확인할 수 없음", viewModel.StartupStatusText);
         Assert.IsFalse(viewModel.IsStartupActuallyEnabled);
         Assert.AreEqual(0, registry.WriteCount);
+    }
+
+    [TestMethod]
+    public async Task CodexExecutableSelection_PersistsAndReturnsToAutomaticWithoutEnablingAutomation()
+    {
+        using var directory = new TemporaryDirectory();
+        var paths = RuntimePaths.ForTesting(directory.Path);
+        var settingsStore = new JsonSettingsStore(paths.SettingsFile);
+        await settingsStore.SaveAsync(GuardSettings.Default, CancellationToken.None);
+        var codexPath = System.IO.Path.Combine(directory.Path, "codex.exe");
+        await File.WriteAllBytesAsync(codexPath, [0]);
+        await using var monitor = new GuardMonitorService(
+            settingsStore,
+            new ImmediateCycleExecutor(),
+            GuardSettings.Default);
+        var viewModel = new MainWindowViewModel(
+            settingsStore,
+            new StartupService(new MemoryRegistryStore()),
+            monitor,
+            GuardSettings.Default);
+
+        var selected = viewModel.TrySetCodexExecutablePath(
+            codexPath,
+            out var errorMessage);
+
+        Assert.IsTrue(selected, errorMessage);
+        Assert.IsTrue(viewModel.HasCustomCodexExecutablePath);
+        Assert.AreEqual("연결 방식 · 직접 지정", viewModel.CodexExecutableModeText);
+        Assert.AreNotEqual(codexPath, viewModel.CodexExecutableDisplayText);
+        Assert.IsFalse(
+            viewModel.CodexExecutableDisplayText.Contains(
+                directory.Path,
+                StringComparison.OrdinalIgnoreCase));
+
+        await viewModel.SaveAsync();
+
+        var selectedSettings = await settingsStore.LoadAsync(CancellationToken.None);
+        Assert.AreEqual(codexPath, selectedSettings.CodexExecutablePath);
+        Assert.IsFalse(selectedSettings.AutomationEnabled);
+
+        viewModel.UseAutomaticCodexExecutablePath();
+        await viewModel.SaveAsync();
+
+        var automaticSettings = await settingsStore.LoadAsync(CancellationToken.None);
+        Assert.IsNull(automaticSettings.CodexExecutablePath);
+        Assert.IsFalse(automaticSettings.AutomationEnabled);
+        Assert.IsFalse(viewModel.HasCustomCodexExecutablePath);
+        Assert.AreEqual("연결 방식 · 자동 찾기", viewModel.CodexExecutableModeText);
+    }
+
+    [TestMethod]
+    public async Task CodexExecutableSelection_RejectsWrongMissingAndRelativeFiles()
+    {
+        using var directory = new TemporaryDirectory();
+        var paths = RuntimePaths.ForTesting(directory.Path);
+        var settingsStore = new JsonSettingsStore(paths.SettingsFile);
+        await settingsStore.SaveAsync(GuardSettings.Default, CancellationToken.None);
+        var wrongNamePath = System.IO.Path.Combine(directory.Path, "not-codex.exe");
+        await File.WriteAllBytesAsync(wrongNamePath, [0]);
+        await using var monitor = new GuardMonitorService(
+            settingsStore,
+            new ImmediateCycleExecutor(),
+            GuardSettings.Default);
+        var viewModel = new MainWindowViewModel(
+            settingsStore,
+            new StartupService(new MemoryRegistryStore()),
+            monitor,
+            GuardSettings.Default);
+
+        Assert.IsFalse(viewModel.TrySetCodexExecutablePath(wrongNamePath, out _));
+        Assert.IsFalse(viewModel.TrySetCodexExecutablePath(
+            System.IO.Path.Combine(directory.Path, "codex.exe"),
+            out _));
+        Assert.IsFalse(viewModel.TrySetCodexExecutablePath("codex.exe", out _));
+        Assert.IsNull(viewModel.ConfiguredCodexExecutablePath);
     }
 
     [TestMethod]
@@ -188,6 +264,33 @@ public sealed class MainWindowViewModelTests
         Assert.IsFalse(viewModel.OverallStatus.Contains("안전 차단", StringComparison.Ordinal));
     }
 
+    [DataTestMethod]
+    [DataRow(AppServerFailureCategory.ExecutableNotFound, "Codex CLI를 찾지 못했습니다")]
+    [DataRow(AppServerFailureCategory.ExecutableBecameUnavailable, "업데이트되어 실행 경로가 바뀐")]
+    [DataRow(AppServerFailureCategory.StartFailed, "Codex CLI를 시작하지 못했습니다")]
+    public async Task ExecutableFailure_ShowsAnActionableConnectionMessage(
+        AppServerFailureCategory category,
+        string expectedText)
+    {
+        using var directory = new TemporaryDirectory();
+        var paths = RuntimePaths.ForTesting(directory.Path);
+        var settingsStore = new JsonSettingsStore(paths.SettingsFile);
+        await settingsStore.SaveAsync(GuardSettings.Default, CancellationToken.None);
+        await using var monitor = new GuardMonitorService(
+            settingsStore,
+            new AppServerFailureCycleExecutor(category),
+            GuardSettings.Default);
+        var viewModel = new MainWindowViewModel(
+            settingsStore,
+            new StartupService(new MemoryRegistryStore()),
+            monitor,
+            GuardSettings.Default);
+
+        await monitor.RefreshAsync();
+
+        StringAssert.Contains(viewModel.OverallStatus, expectedText);
+    }
+
     [TestMethod]
     public async Task SaveAsync_RequiresExplicitConfirmationBeforeEnablingAutomation()
     {
@@ -327,6 +430,23 @@ public sealed class MainWindowViewModelTests
             };
             return Task.FromResult(result);
         }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class AppServerFailureCycleExecutor : IGuardCycleExecutor
+    {
+        private readonly AppServerFailureCategory category;
+
+        public AppServerFailureCycleExecutor(AppServerFailureCategory category)
+        {
+            this.category = category;
+        }
+
+        public Task<GuardCycleResult> ExecuteAsync(
+            GuardSettings settings,
+            CancellationToken cancellationToken) =>
+            Task.FromException<GuardCycleResult>(new AppServerException(category));
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }

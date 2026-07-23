@@ -277,7 +277,8 @@ public sealed class CodexAppServerClient : IAccountRateLimitClient
     {
         if (!File.Exists(executablePath))
         {
-            throw new AppServerException(AppServerFailureCategory.ExecutableNotFound);
+            throw new AppServerException(
+                AppServerFailureCategory.ExecutableBecameUnavailable);
         }
 
         var startInfo = new ProcessStartInfo

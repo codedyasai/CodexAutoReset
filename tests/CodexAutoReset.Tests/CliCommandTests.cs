@@ -138,6 +138,7 @@ public sealed class CliCommandTests
     [DataTestMethod]
     [DataRow("InvalidResponse", "ProtocolMismatch")]
     [DataRow("ExecutableNotFound", "Retryable")]
+    [DataRow("ExecutableBecameUnavailable", "Retryable")]
     [DataRow("StartFailed", "Retryable")]
     [DataRow("ProcessExited", "Retryable")]
     [DataRow("Timeout", "Retryable")]

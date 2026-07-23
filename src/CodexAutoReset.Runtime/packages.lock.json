@@ -5,7 +5,7 @@
       "codexautoreset.appserver": {
         "type": "Project",
         "dependencies": {
-          "CodexAutoReset.Core": "[0.2.0, )"
+          "CodexAutoReset.Core": "[0.2.1, )"
         }
       },
       "codexautoreset.core": {

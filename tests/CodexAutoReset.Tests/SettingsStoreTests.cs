@@ -208,6 +208,24 @@ public sealed class SettingsStoreTests
         Assert.AreEqual("settings_invalid_json", exception.ReasonCode);
     }
 
+    [TestMethod]
+    public async Task MissingConfiguredExecutableStillLoadsSoTheUserCanRecover()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var settingsPath = Path.Combine(directory.Path, "settings.json");
+        var missingCodexPath = Path.Combine(directory.Path, "missing", "codex.exe");
+        var settings = GuardSettings.Default with
+        {
+            CodexExecutablePath = missingCodexPath,
+        };
+        var store = new JsonSettingsStore(settingsPath);
+
+        await store.SaveAsync(settings, CancellationToken.None);
+        var loaded = await store.LoadAsync(CancellationToken.None);
+
+        Assert.AreEqual(missingCodexPath, loaded.CodexExecutablePath);
+    }
+
     [DataTestMethod]
     [DataRow("daily", "live", "trigger_limit_invalid")]
     [DataRow("weekly", "LIVE", "execution_mode_invalid")]

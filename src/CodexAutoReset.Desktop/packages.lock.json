@@ -5,7 +5,7 @@
       "codexautoreset.appserver": {
         "type": "Project",
         "dependencies": {
-          "CodexAutoReset.Core": "[0.2.0, )"
+          "CodexAutoReset.Core": "[0.2.1, )"
         }
       },
       "codexautoreset.core": {
@@ -14,8 +14,8 @@
       "codexautoreset.runtime": {
         "type": "Project",
         "dependencies": {
-          "CodexAutoReset.AppServer": "[0.2.0, )",
-          "CodexAutoReset.Core": "[0.2.0, )"
+          "CodexAutoReset.AppServer": "[0.2.1, )",
+          "CodexAutoReset.Core": "[0.2.1, )"
         }
       }
     },

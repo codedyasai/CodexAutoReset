@@ -18,6 +18,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private GuardSettings persistedSettings;
     private string thresholdText;
     private string pollIntervalText;
+    private string? codexExecutablePath;
     private bool automationEnabled;
     private bool startWithWindows;
     private string weeklyRemainingText = "—";
@@ -46,6 +47,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             CultureInfo.InvariantCulture);
         pollIntervalText = initialSettings.PollIntervalMinutes.ToString(
             CultureInfo.InvariantCulture);
+        codexExecutablePath = initialSettings.CodexExecutablePath;
         automationEnabled = initialSettings.AutomationEnabled;
         startWithWindows = initialSettings.StartWithWindows;
 
@@ -67,6 +69,18 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         get => pollIntervalText;
         set => SetField(ref pollIntervalText, value);
     }
+
+    public string? ConfiguredCodexExecutablePath => codexExecutablePath;
+
+    public bool HasCustomCodexExecutablePath => codexExecutablePath is not null;
+
+    public string CodexExecutableModeText => HasCustomCodexExecutablePath
+        ? "연결 방식 · 직접 지정"
+        : "연결 방식 · 자동 찾기";
+
+    public string CodexExecutableDisplayText => codexExecutablePath is null
+        ? "Windows에 설치된 Codex를 자동으로 찾습니다."
+        : FormatExecutablePathForDisplay(codexExecutablePath);
 
     public bool AutomationEnabled
     {
@@ -154,6 +168,47 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     public void RequestRefresh() => monitor.RequestRefresh();
 
+    public bool TrySetCodexExecutablePath(string? path, out string errorMessage)
+    {
+        if (string.IsNullOrWhiteSpace(path)
+            || !Path.IsPathFullyQualified(path)
+            || !string.Equals(
+                Path.GetFileName(path),
+                "codex.exe",
+                StringComparison.OrdinalIgnoreCase)
+            || !File.Exists(path))
+        {
+            errorMessage = "파일 이름이 codex.exe인 실제 실행 파일을 선택하세요.";
+            SaveStatus = errorMessage;
+            return false;
+        }
+
+        try
+        {
+            SetCodexExecutablePath(Path.GetFullPath(path));
+        }
+        catch (Exception exception) when (exception is
+            ArgumentException
+                or NotSupportedException
+                or PathTooLongException
+                or System.Security.SecurityException)
+        {
+            errorMessage = "선택한 실행 파일 경로를 안전하게 확인할 수 없습니다.";
+            SaveStatus = errorMessage;
+            return false;
+        }
+
+        errorMessage = string.Empty;
+        SaveStatus = "Codex 실행 파일을 선택했습니다. 아래에서 설정을 저장하세요.";
+        return true;
+    }
+
+    public void UseAutomaticCodexExecutablePath()
+    {
+        SetCodexExecutablePath(null);
+        SaveStatus = "Codex를 자동으로 찾도록 변경했습니다. 아래에서 설정을 저장하세요.";
+    }
+
     public async Task SaveAsync(bool automationEnableConfirmed = false)
     {
         if (Volatile.Read(ref stopping) != 0)
@@ -200,6 +255,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                 RemainingThresholdPercent = threshold,
                 PollIntervalMinutes = pollInterval,
                 StartWithWindows = StartWithWindows,
+                CodexExecutablePath = codexExecutablePath,
                 AutomationEnabled = AutomationEnabled,
             };
 
@@ -398,6 +454,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             CultureInfo.InvariantCulture);
         PollIntervalText = settings.PollIntervalMinutes.ToString(
             CultureInfo.InvariantCulture);
+        SetCodexExecutablePath(settings.CodexExecutablePath);
         AutomationEnabled = settings.AutomationEnabled;
         OnPropertyChanged(nameof(RequiresAutomationEnableConfirmation));
         TryRefreshStartupState();
@@ -420,6 +477,10 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             StringComparison.Ordinal);
         var automationWasUnedited =
             AutomationEnabled == baselineSettings.AutomationEnabled;
+        var codexExecutableWasUnedited = string.Equals(
+            codexExecutablePath,
+            baselineSettings.CodexExecutablePath,
+            StringComparison.OrdinalIgnoreCase);
 
         persistedSettings = freshSettings;
         if (thresholdWasUnedited)
@@ -437,6 +498,11 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         if (automationWasUnedited)
         {
             AutomationEnabled = freshSettings.AutomationEnabled;
+        }
+
+        if (codexExecutableWasUnedited)
+        {
+            SetCodexExecutablePath(freshSettings.CodexExecutablePath);
         }
 
         OnPropertyChanged(nameof(RequiresAutomationEnableConfirmation));
@@ -502,7 +568,16 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
         if (snapshot.IsFailure)
         {
-            return "조회 또는 판단이 불명확해 안전하게 중단했습니다.";
+            return snapshot.StatusCode switch
+            {
+                "executable_not_found" =>
+                    "Codex CLI를 찾지 못했습니다. CLI 설치를 확인하거나 아래 Codex 연결에서 codex.exe를 선택하세요.",
+                "executable_became_unavailable" =>
+                    "Codex가 업데이트되어 실행 경로가 바뀐 것 같습니다. 잠시 후 다시 확인하세요.",
+                "start_failed" =>
+                    "Codex CLI를 시작하지 못했습니다. Codex가 정상 실행·로그인되는지 확인하세요.",
+                _ => "조회 또는 판단이 불명확해 안전하게 중단했습니다.",
+            };
         }
 
         if (snapshot.ActionKind == CycleActionKind.ResetSucceeded)
@@ -533,8 +608,64 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     {
         "threshold_out_of_range" => "잔여량 임계값은 1~100%로 설정하세요.",
         "poll_interval_out_of_range" => "조회 주기는 1~60분으로 설정하세요.",
+        "codex_executable_path_invalid" => "선택한 codex.exe를 찾을 수 없습니다. 다시 선택하세요.",
         _ => $"설정값이 올바르지 않습니다: {code}",
     };
+
+    private void SetCodexExecutablePath(string? path)
+    {
+        if (!SetField(ref codexExecutablePath, path, nameof(ConfiguredCodexExecutablePath)))
+        {
+            return;
+        }
+
+        OnPropertyChanged(nameof(HasCustomCodexExecutablePath));
+        OnPropertyChanged(nameof(CodexExecutableModeText));
+        OnPropertyChanged(nameof(CodexExecutableDisplayText));
+    }
+
+    private static string FormatExecutablePathForDisplay(string path)
+    {
+        var localAppData = Environment.GetFolderPath(
+            Environment.SpecialFolder.LocalApplicationData);
+        if (TryMakePrivacySafePath(path, localAppData, "%LOCALAPPDATA%", out var displayPath))
+        {
+            return displayPath;
+        }
+
+        var userProfile = Environment.GetFolderPath(
+            Environment.SpecialFolder.UserProfile);
+        if (TryMakePrivacySafePath(path, userProfile, "%USERPROFILE%", out displayPath))
+        {
+            return displayPath;
+        }
+
+        return $"…\\{Path.GetFileName(path)}";
+    }
+
+    private static bool TryMakePrivacySafePath(
+        string path,
+        string baseDirectory,
+        string placeholder,
+        out string displayPath)
+    {
+        displayPath = string.Empty;
+        if (string.IsNullOrWhiteSpace(baseDirectory))
+        {
+            return false;
+        }
+
+        var relativePath = Path.GetRelativePath(baseDirectory, path);
+        if (Path.IsPathFullyQualified(relativePath)
+            || relativePath.Equals("..", StringComparison.Ordinal)
+            || relativePath.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        displayPath = $"{placeholder}\\{relativePath}";
+        return true;
+    }
 
     private bool SetField<T>(ref T field, T value, [CallerMemberName] string? name = null)
     {

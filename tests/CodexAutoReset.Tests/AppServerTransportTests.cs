@@ -102,6 +102,63 @@ public sealed class AppServerTransportTests
     }
 
     [TestMethod]
+    public void RecognizedCandidateKeepsTheStableVisiblePath()
+    {
+        using var temporaryExecutable = TemporaryCodexExecutable.Create();
+
+        var resolution = CodexExecutableLocator.ResolveExistingCandidate(
+            temporaryExecutable.Path,
+            CodexExecutableDiscoverySource.RecognizedInstallation,
+            wasExplicitAbsolutePath: false);
+
+        Assert.AreEqual(
+            System.IO.Path.GetFullPath(temporaryExecutable.Path),
+            resolution.ExecutablePath);
+        Assert.AreEqual(
+            CodexExecutableTrust.ReadOnlyUnverifiedPath,
+            resolution.Trust);
+        Assert.IsFalse(resolution.AllowsMutation);
+    }
+
+    [TestMethod]
+    public void RecognizedPathsUseSafeFallbackRootsAndDeduplicate()
+    {
+        var firstRoot = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(),
+            "CodexAutoReset-local-app-data");
+        var secondRoot = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(),
+            "CodexAutoReset-fallback-local-app-data");
+
+        var paths = CodexExecutableLocator.BuildRecognizedInstallationPaths(
+            firstRoot,
+            firstRoot.ToUpperInvariant(),
+            null,
+            "relative-path",
+            secondRoot);
+
+        Assert.AreEqual(2, paths.Count);
+        Assert.AreEqual(
+            System.IO.Path.Combine(
+                System.IO.Path.GetFullPath(firstRoot),
+                "Programs",
+                "OpenAI",
+                "Codex",
+                "bin",
+                "codex.exe"),
+            paths[0]);
+        Assert.AreEqual(
+            System.IO.Path.Combine(
+                System.IO.Path.GetFullPath(secondRoot),
+                "Programs",
+                "OpenAI",
+                "Codex",
+                "bin",
+                "codex.exe"),
+            paths[1]);
+    }
+
+    [TestMethod]
     public async Task LegacyStringClientCannotPerformMutation()
     {
         using var temporaryExecutable = TemporaryCodexExecutable.Create();

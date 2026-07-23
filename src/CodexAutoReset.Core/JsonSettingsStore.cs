@@ -182,8 +182,7 @@ public sealed class JsonSettingsStore
                 || !string.Equals(
                     System.IO.Path.GetFileName(settings.CodexExecutablePath),
                     "codex.exe",
-                    StringComparison.OrdinalIgnoreCase)
-                || !File.Exists(settings.CodexExecutablePath))
+                    StringComparison.OrdinalIgnoreCase))
             {
                 throw new SettingsException("codex_executable_path_invalid");
             }

@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.IO;
 using System.Windows;
 
 namespace CodexAutoReset.Desktop;
@@ -71,6 +72,58 @@ public partial class MainWindow : Window
 
     private void OnRefreshClick(object sender, RoutedEventArgs eventArgs) =>
         viewModel.RequestRefresh();
+
+    private void OnSelectCodexExecutableClick(object sender, RoutedEventArgs eventArgs)
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Codex 실행 파일 선택",
+            Filter = "Codex 실행 파일 (codex.exe)|codex.exe",
+            FileName = "codex.exe",
+            CheckFileExists = true,
+            CheckPathExists = true,
+            Multiselect = false,
+            ValidateNames = true,
+        };
+
+        var configuredPath = viewModel.ConfiguredCodexExecutablePath;
+        if (configuredPath is not null && File.Exists(configuredPath))
+        {
+            dialog.FileName = configuredPath;
+        }
+        else
+        {
+            var standardDirectory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Programs",
+                "OpenAI",
+                "Codex",
+                "bin");
+            if (Directory.Exists(standardDirectory))
+            {
+                dialog.InitialDirectory = standardDirectory;
+            }
+        }
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        if (!viewModel.TrySetCodexExecutablePath(dialog.FileName, out var errorMessage))
+        {
+            System.Windows.MessageBox.Show(
+                this,
+                errorMessage,
+                "Codex 실행 파일 선택",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
+    }
+
+    private void OnUseAutomaticCodexExecutableClick(
+        object sender,
+        RoutedEventArgs eventArgs) => viewModel.UseAutomaticCodexExecutablePath();
 
     private void OnHideClick(object sender, RoutedEventArgs eventArgs) => Hide();
 }

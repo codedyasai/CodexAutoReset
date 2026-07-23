@@ -23,6 +23,7 @@ public sealed class AppServerLiveResetFailureClassifier : ILiveResetFailureClass
             AppServerFailureCategory.InvalidResponse =>
                 LiveResetFailureDisposition.ProtocolMismatch,
             AppServerFailureCategory.ExecutableNotFound
+                or AppServerFailureCategory.ExecutableBecameUnavailable
                 or AppServerFailureCategory.StartFailed
                 or AppServerFailureCategory.ProcessExited
                 or AppServerFailureCategory.Timeout

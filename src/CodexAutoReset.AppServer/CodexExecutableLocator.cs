@@ -61,43 +61,14 @@ public static class CodexExecutableLocator
                 Path.IsPathFullyQualified(configuredPath));
         }
 
-        var standardPath = GetRecognizedInstallationPath();
-        if (standardPath is not null && IsCodexExecutable(standardPath))
+        foreach (var standardPath in GetRecognizedInstallationPaths())
         {
-            return ResolveExistingCandidate(
-                standardPath,
-                CodexExecutableDiscoverySource.RecognizedInstallation,
-                wasExplicitAbsolutePath: false);
-        }
-
-        var pathValue = Environment.GetEnvironmentVariable("PATH");
-        if (pathValue is not null)
-        {
-            foreach (var segment in pathValue.Split(Path.PathSeparator))
+            if (IsCodexExecutable(standardPath))
             {
-                var directory = segment.Trim().Trim('"');
-                if (directory.Length == 0)
-                {
-                    continue;
-                }
-
-                try
-                {
-                    var candidate = Path.Combine(directory, "codex.exe");
-                    if (IsCodexExecutable(candidate))
-                    {
-                        return ResolveExistingCandidate(
-                            candidate,
-                            CodexExecutableDiscoverySource.PathEnvironment,
-                            wasExplicitAbsolutePath: false);
-                    }
-                }
-                catch (ArgumentException)
-                {
-                }
-                catch (NotSupportedException)
-                {
-                }
+                return ResolveExistingCandidate(
+                    standardPath,
+                    CodexExecutableDiscoverySource.RecognizedInstallation,
+                    wasExplicitAbsolutePath: false);
             }
         }
 
@@ -130,7 +101,6 @@ public static class CodexExecutableLocator
         var canonicalizationSucceeded = TryGetCanonicalPath(
             fullPath,
             out var canonicalPath);
-        var resolvedPath = canonicalizationSucceeded ? canonicalPath : fullPath;
         var resolvesToRecognizedInstallation = canonicalizationSucceeded
             && IsRecognizedCanonicalPath(canonicalPath);
 
@@ -150,7 +120,10 @@ public static class CodexExecutableLocator
             _ => CodexExecutableTrust.ReadOnlyUnverifiedPath,
         };
 
-        return new CodexExecutableResolution(resolvedPath, discoverySource, trust);
+        // Canonicalization establishes trust, but the visible installer path is
+        // the stable launch point. Its canonical target is a versioned Codex
+        // package-cache path that can change during an update.
+        return new CodexExecutableResolution(fullPath, discoverySource, trust);
     }
 
     internal static string CanonicalizeForReadOnly(string path)
@@ -162,31 +135,85 @@ public static class CodexExecutableLocator
                 : fullPath;
     }
 
-    private static string? GetRecognizedInstallationPath()
+    internal static IReadOnlyList<string> BuildRecognizedInstallationPaths(
+        params string?[] localAppDataRoots)
+    {
+        var paths = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var root in localAppDataRoots)
+        {
+            if (string.IsNullOrWhiteSpace(root)
+                || !Path.IsPathFullyQualified(root))
+            {
+                continue;
+            }
+
+            try
+            {
+                var path = Path.Combine(
+                    Path.GetFullPath(root),
+                    "Programs",
+                    "OpenAI",
+                    "Codex",
+                    "bin",
+                    "codex.exe");
+                if (seen.Add(path))
+                {
+                    paths.Add(path);
+                }
+            }
+            catch (Exception exception) when (
+                exception is ArgumentException
+                    or NotSupportedException
+                    or PathTooLongException)
+            {
+            }
+        }
+
+        return paths;
+    }
+
+    private static IReadOnlyList<string> GetRecognizedInstallationPaths()
     {
         var localAppData = Environment.GetFolderPath(
             Environment.SpecialFolder.LocalApplicationData);
-        return string.IsNullOrWhiteSpace(localAppData)
+        var localAppDataEnvironment = Environment.GetEnvironmentVariable(
+            "LOCALAPPDATA");
+        var userProfile = Environment.GetFolderPath(
+            Environment.SpecialFolder.UserProfile);
+        var userProfileEnvironment = Environment.GetEnvironmentVariable(
+            "USERPROFILE");
+        var conventionalLocalAppData = string.IsNullOrWhiteSpace(userProfile)
             ? null
-            : Path.Combine(
-                localAppData,
-                "Programs",
-                "OpenAI",
-                "Codex",
-                "bin",
-                "codex.exe");
+            : Path.Combine(userProfile, "AppData", "Local");
+        var conventionalEnvironmentLocalAppData =
+            string.IsNullOrWhiteSpace(userProfileEnvironment)
+                ? null
+                : Path.Combine(userProfileEnvironment, "AppData", "Local");
+
+        return BuildRecognizedInstallationPaths(
+            localAppData,
+            localAppDataEnvironment,
+            conventionalLocalAppData,
+            conventionalEnvironmentLocalAppData);
     }
 
     private static bool IsRecognizedCanonicalPath(string canonicalPath)
     {
-        var recognizedPath = GetRecognizedInstallationPath();
-        return recognizedPath is not null
-            && IsCodexExecutable(recognizedPath)
-            && TryGetCanonicalPath(recognizedPath, out var canonicalRecognizedPath)
-            && string.Equals(
-                canonicalPath,
-                canonicalRecognizedPath,
-                StringComparison.OrdinalIgnoreCase);
+        foreach (var recognizedPath in GetRecognizedInstallationPaths())
+        {
+            if (IsCodexExecutable(recognizedPath)
+                && TryGetCanonicalPath(recognizedPath, out var canonicalRecognizedPath)
+                && string.Equals(
+                    canonicalPath,
+                    canonicalRecognizedPath,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool TryGetCanonicalPath(string path, out string canonicalPath)

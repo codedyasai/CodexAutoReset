@@ -76,6 +76,7 @@ public sealed class SafeJsonlLogger
             "credit_summary_unavailable",
             "dispatch_limit_reached",
             "execution_mode_invalid",
+            "executable_became_unavailable",
             "executable_not_found",
             "invalid_credit_count",
             "invalid_outbound_message",

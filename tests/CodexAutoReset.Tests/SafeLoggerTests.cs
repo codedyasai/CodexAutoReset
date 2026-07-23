@@ -123,7 +123,8 @@ public sealed class SafeLoggerTests
     [DataRow("live_sticky_state_missing")]
     [DataRow("live_needs_review")]
     [DataRow("live_protocol_blocked")]
-    public async Task LoggerAcceptsFixedLiveSafetyReasonCodes(string reasonCode)
+    [DataRow("executable_became_unavailable")]
+    public async Task LoggerAcceptsFixedReasonCodes(string reasonCode)
     {
         using var directory = TemporaryDirectory.Create();
         var logger = new SafeJsonlLogger(directory.Path);

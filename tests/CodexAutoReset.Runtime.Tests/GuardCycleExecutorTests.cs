@@ -274,6 +274,7 @@ public sealed class GuardCycleExecutorTests
 
     [DataTestMethod]
     [DataRow(AppServerFailureCategory.Timeout, LiveResetFailureDisposition.Retryable)]
+    [DataRow(AppServerFailureCategory.ExecutableBecameUnavailable, LiveResetFailureDisposition.Retryable)]
     [DataRow(AppServerFailureCategory.ProcessExited, LiveResetFailureDisposition.Retryable)]
     [DataRow(AppServerFailureCategory.IoError, LiveResetFailureDisposition.Retryable)]
     [DataRow(AppServerFailureCategory.InvalidResponse, LiveResetFailureDisposition.ProtocolMismatch)]

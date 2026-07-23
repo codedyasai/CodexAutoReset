@@ -3,6 +3,7 @@ namespace CodexAutoReset.AppServer;
 public enum AppServerFailureCategory
 {
     ExecutableNotFound,
+    ExecutableBecameUnavailable,
     StartFailed,
     ProcessExited,
     Timeout,

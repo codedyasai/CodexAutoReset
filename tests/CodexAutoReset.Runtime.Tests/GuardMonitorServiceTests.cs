@@ -224,6 +224,7 @@ public sealed class GuardMonitorServiceTests
 
     [DataTestMethod]
     [DataRow(AppServerFailureCategory.Timeout)]
+    [DataRow(AppServerFailureCategory.ExecutableBecameUnavailable)]
     [DataRow(AppServerFailureCategory.ProcessExited)]
     [DataRow(AppServerFailureCategory.IoError)]
     public async Task RefreshAsync_RetryableReadFailurePreservesDisplayedLivePending(

@@ -21,11 +21,11 @@ OpenAI 로고를 포함하지 않으며, Codex 인증 파일을 직접 읽지 �
 ## 사용 전 준비
 
 - 64비트 Windows 10 버전 1809 이상
-- 정상적으로 실행되고 로그인된 Codex
+- 정상적으로 로그인된 Codex와 Windows용 `codex.exe`
 - 설치 파일을 받을 인터넷 연결
 
 설치 파일에는 필요한 .NET 런타임이 포함되므로 .NET SDK, Visual Studio,
-Git을 따로 설치할 필요가 없습니다. Codex 자체는 포함하지 않습니다.
+Git을 따로 설치할 필요가 없습니다. Codex와 Codex CLI 자체는 포함하지 않습니다.
 
 ## 가장 쉬운 설치 방법
 
@@ -139,9 +139,16 @@ SmartScreen 경고가 표시될 수 있습니다.
 
 ### Codex를 찾을 수 없다고 나옵니다
 
-Codex가 설치되어 있고 정상적으로 로그인되는지 먼저 확인하세요. 사용자 지정
-`codex.exe`를 사용한다면 앱 설정에서 해당 파일의 전체 경로를 지정할 수 있습니다.
-자동 초기화는 신뢰할 수 있는 것으로 확인된 실행 파일에서만 동작합니다.
+Codex가 설치되어 있고 정상적으로 로그인되는지 먼저 확인하세요. CodexAutoReset은
+Windows용 `codex.exe`를 통해 연결하므로 Codex 데스크톱 앱만 있고 실행 파일을
+찾을 수 없다면 [OpenAI의 Codex CLI 안내](https://learn.chatgpt.com/docs/codex/cli)를
+따라 CLI를 먼저 설치해야 합니다. 앱의
+**Codex 연결 → codex.exe 선택**을 누르면 보통 Codex 설치 폴더가 바로 열립니다.
+그 안의 `codex.exe`를 선택하고 **설정 저장 → 지금 새로고침**을 차례로 누르세요.
+일반적인 설치 위치는
+`%LOCALAPPDATA%\Programs\OpenAI\Codex\bin\codex.exe`입니다. 다시 자동 검색을
+사용하려면 **자동으로 찾기 → 설정 저장**을 누릅니다. 자동 초기화는 공식 기본
+경로에서 찾았거나 사용자가 직접 선택한 `codex.exe`에서만 동작합니다.
 
 ### 자동 초기화가 안전 차단됐습니다
 

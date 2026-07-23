@@ -403,6 +403,7 @@ public sealed class GuardMonitorService : IAsyncDisposable
 
     private static bool IsRetryable(AppServerFailureCategory category) => category is
         AppServerFailureCategory.ExecutableNotFound
+        or AppServerFailureCategory.ExecutableBecameUnavailable
         or AppServerFailureCategory.StartFailed
         or AppServerFailureCategory.ProcessExited
         or AppServerFailureCategory.Timeout

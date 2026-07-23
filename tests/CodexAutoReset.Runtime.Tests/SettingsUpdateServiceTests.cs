@@ -37,6 +37,45 @@ public sealed class SettingsUpdateServiceTests
     }
 
     [TestMethod]
+    public async Task SaveCodexExecutablePathAsync_ChangesOnlyPathWithoutTouchingRegistry()
+    {
+        var codexPath = Path.Combine(temporaryDirectory, "codex.exe");
+        File.WriteAllBytes(codexPath, [0]);
+        var persisted = GuardSettings.Default with
+        {
+            StartWithWindows = true,
+            AutomationEnabled = true,
+        };
+        var registry = new CountingRegistryStore();
+        registry.Seed(
+            StartupService.RunSubKey,
+            StartupService.RunValueName,
+            "foreign-command.exe");
+        var service = new SettingsUpdateService(
+            new StartupService(registry),
+            _ => Task.FromResult(persisted),
+            (settings, _) =>
+            {
+                persisted = settings;
+                return Task.CompletedTask;
+            });
+
+        var updated = await service.SaveCodexExecutablePathAsync(
+            persisted,
+            codexPath,
+            CancellationToken.None);
+
+        Assert.AreEqual(codexPath, updated.CodexExecutablePath);
+        Assert.IsTrue(updated.StartWithWindows);
+        Assert.IsTrue(updated.AutomationEnabled);
+        Assert.AreEqual(updated, persisted);
+        Assert.AreEqual(0, registry.WriteCount);
+        Assert.AreEqual(
+            "foreign-command.exe",
+            registry.GetString(StartupService.RunSubKey, StartupService.RunValueName));
+    }
+
+    [TestMethod]
     public async Task SaveAsync_UnchangedStartupDoesNotTouchForeignRegistryValue()
     {
         var registry = new CountingRegistryStore();

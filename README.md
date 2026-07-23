@@ -144,10 +144,10 @@ Windows용 `codex.exe`를 통해 연결하므로 Codex 데스크톱 앱만 있�
 찾을 수 없다면 [OpenAI의 Codex CLI 안내](https://learn.chatgpt.com/docs/codex/cli)를
 따라 CLI를 먼저 설치해야 합니다. 앱의
 **Codex 연결 → codex.exe 선택**을 누르면 보통 Codex 설치 폴더가 바로 열립니다.
-그 안의 `codex.exe`를 선택하고 **설정 저장 → 지금 새로고침**을 차례로 누르세요.
+그 안의 `codex.exe`를 선택하면 연결 경로가 바로 저장되고 다음 확인부터 사용됩니다.
 일반적인 설치 위치는
 `%LOCALAPPDATA%\Programs\OpenAI\Codex\bin\codex.exe`입니다. 다시 자동 검색을
-사용하려면 **자동으로 찾기 → 설정 저장**을 누릅니다. 자동 초기화는 공식 기본
+사용하려면 **자동으로 찾기**를 누릅니다. 자동 초기화는 공식 기본
 경로에서 찾았거나 사용자가 직접 선택한 `codex.exe`에서만 동작합니다.
 
 ### 자동 초기화가 안전 차단됐습니다

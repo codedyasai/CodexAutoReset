@@ -240,6 +240,33 @@ public sealed class GuardMonitorService : IAsyncDisposable
         return updatedSettings;
     }
 
+    public async Task<GuardSettings> SetCodexExecutablePathAsync(
+        SettingsUpdateService settingsUpdateService,
+        GuardSettings previousSettings,
+        string? codexExecutablePath,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(settingsUpdateService);
+        ArgumentNullException.ThrowIfNull(previousSettings);
+
+        GuardSettings updatedSettings;
+        await cycleGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            updatedSettings = await settingsUpdateService.SaveCodexExecutablePathAsync(
+                previousSettings,
+                codexExecutablePath,
+                cancellationToken).ConfigureAwait(false);
+            ApplyPersistedSettings(updatedSettings);
+        }
+        finally
+        {
+            cycleGate.Release();
+        }
+
+        return updatedSettings;
+    }
+
     public async ValueTask DisposeAsync()
     {
         stopSource.Cancel();

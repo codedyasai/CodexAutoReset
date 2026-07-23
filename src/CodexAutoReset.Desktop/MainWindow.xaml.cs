@@ -73,7 +73,7 @@ public partial class MainWindow : Window
     private void OnRefreshClick(object sender, RoutedEventArgs eventArgs) =>
         viewModel.RequestRefresh();
 
-    private void OnSelectCodexExecutableClick(object sender, RoutedEventArgs eventArgs)
+    private async void OnSelectCodexExecutableClick(object sender, RoutedEventArgs eventArgs)
     {
         var dialog = new Microsoft.Win32.OpenFileDialog
         {
@@ -118,12 +118,17 @@ public partial class MainWindow : Window
                 "Codex 실행 파일 선택",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
+            return;
         }
+
+        await viewModel.SaveCodexExecutablePathAsync();
     }
 
-    private void OnUseAutomaticCodexExecutableClick(
+    private async void OnUseAutomaticCodexExecutableClick(
         object sender,
-        RoutedEventArgs eventArgs) => viewModel.UseAutomaticCodexExecutablePath();
-
-    private void OnHideClick(object sender, RoutedEventArgs eventArgs) => Hide();
+        RoutedEventArgs eventArgs)
+    {
+        viewModel.UseAutomaticCodexExecutablePath();
+        await viewModel.SaveCodexExecutablePathAsync();
+    }
 }

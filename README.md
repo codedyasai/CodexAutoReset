@@ -1,16 +1,16 @@
-# CodexResetGuard
+# CodexAutoReset
 
-CodexResetGuard는 Codex의 주간 사용량을 확인하고, 설정한 잔여량에 도달하면
+CodexAutoReset은 Codex의 주간 사용량을 확인하고, 설정한 잔여량에 도달하면
 보유한 초기화권을 한 번만 안전하게 사용하도록 돕는 Windows 트레이 앱입니다.
 
-[Windows용 설치 파일 다운로드](../../releases/latest/download/CodexResetGuard-Setup-x64.exe)
-· [설치 없는 Portable ZIP](../../releases/latest/download/CodexResetGuard-Portable-x64.zip)
+[Windows용 설치 파일 다운로드](../../releases/latest/download/CodexAutoReset-Setup-x64.exe)
+· [설치 없는 Portable ZIP](../../releases/latest/download/CodexAutoReset-Portable-x64.zip)
 · [SHA-256 확인값](../../releases/latest/download/SHA256SUMS.txt)
 
 이 프로젝트는 OpenAI가 제작·지원·보증하는 공식 제품이 아닙니다. Codex나
 OpenAI 로고를 포함하지 않으며, Codex 인증 파일을 직접 읽지 않습니다.
 
-![CodexResetGuard 주간 사용량 화면](docs/CodexResetGuard.png)
+![CodexAutoReset 주간 사용량 화면](docs/CodexAutoReset.png)
 
 ## 만든 이유
 
@@ -30,12 +30,12 @@ Git을 따로 설치할 필요가 없습니다. Codex 자체는 포함하지 않
 ## 가장 쉬운 설치 방법
 
 1. 위의 **Windows용 설치 파일 다운로드**를 누릅니다.
-2. 내려받은 `CodexResetGuard-Setup-x64.exe`를 실행합니다.
+2. 내려받은 `CodexAutoReset-Setup-x64.exe`를 실행합니다.
 3. Windows에서 `PC 보호` 또는 `알 수 없는 게시자` 경고가 표시되면 파일을
    이 저장소의 Release에서 받았는지 확인합니다.
 4. 확인했다면 **추가 정보 → 실행**을 선택합니다.
 5. 설치 창에서 **설치**를 누릅니다. 관리자 권한은 필요하지 않습니다.
-6. 설치가 끝나면 CodexResetGuard가 자동으로 실행됩니다.
+6. 설치가 끝나면 CodexAutoReset이 자동으로 실행됩니다.
 
 유료 코드 서명을 사용하지 않기 때문에 SmartScreen 경고가 표시될 수 있습니다.
 다운로드 출처를 확인할 수 없다면 실행하지 마세요. 필요한 경우 함께 제공되는
@@ -46,7 +46,7 @@ Git을 따로 설치할 필요가 없습니다. Codex 자체는 포함하지 않
 같은지 확인하세요.
 
 ```powershell
-Get-FileHash .\CodexResetGuard-Setup-x64.exe -Algorithm SHA256
+Get-FileHash .\CodexAutoReset-Setup-x64.exe -Algorithm SHA256
 ```
 
 ## 처음 실행할 때
@@ -71,9 +71,9 @@ Get-FileHash .\CodexResetGuard-Setup-x64.exe -Algorithm SHA256
 
 ## 설치 없이 사용하기
 
-1. `CodexResetGuard-Portable-x64.zip`을 다운로드합니다.
+1. `CodexAutoReset-Portable-x64.zip`을 다운로드합니다.
 2. ZIP 파일을 마우스 오른쪽 버튼으로 누르고 **압축 풀기**를 선택합니다.
-3. 압축이 완전히 풀린 폴더 안의 `CodexResetGuard.exe`를 실행합니다.
+3. 압축이 완전히 풀린 폴더 안의 `CodexAutoReset.exe`를 실행합니다.
 
 ZIP 안의 EXE만 따로 꺼내면 실행되지 않습니다. 폴더 안의 파일을 함께 보관해야
 합니다. Portable 버전의 위치를 옮길 때는 Windows 자동 시작을 먼저 끈 뒤,
@@ -85,9 +85,15 @@ SmartScreen 경고가 표시될 수 있습니다.
 ## 업데이트와 삭제
 
 새 버전 설치 파일을 받아 다시 실행하면 기존 설치 위치에 업데이트됩니다. 사용자
-설정과 안전 상태는 `%LocalAppData%\CodexResetGuard`에 그대로 유지됩니다.
+설정과 안전 상태는 그대로 유지됩니다. 0.1.0에서 업데이트하는 경우에도 이전
+설치본의 설정, 중복 사용 방지 기록, 안전 차단 기록을 이어서 사용합니다.
 
-삭제하려면 **Windows 설정 → 앱 → 설치된 앱 → CodexResetGuard → 제거**를
+0.1.0 Portable 버전을 사용했다면 이전 앱에서 Windows 자동 시작을 끄고 트레이
+메뉴의 **종료**로 완전히 종료하세요. 새 Portable ZIP을 별도 폴더에 푼 뒤 실행해
+정상 작동을 확인하고, 필요하면 새 앱에서 Windows 자동 시작을 다시 켜면 됩니다.
+이전 Portable 폴더는 새 앱이 정상 작동하는 것을 확인한 뒤 삭제하세요.
+
+삭제하려면 **Windows 설정 → 앱 → 설치된 앱 → CodexAutoReset → 제거**를
 선택합니다. 제거 프로그램은 이 앱이 소유한 자동 시작 항목만 확인해서 지우며,
 다른 프로그램의 같은 이름 항목은 건드리지 않습니다. 안전 기록과 사용자 설정은
 실수로 보호 상태를 초기화하지 않도록 자동 삭제하지 않습니다.
@@ -102,7 +108,7 @@ SmartScreen 경고가 표시될 수 있습니다.
 이 호출도 모델 토큰을 생성하지 않지만, 보유한 초기화권 1개를 실제로 사용할 수
 있습니다.
 
-## 동작 원리
+## 구현 방법과 동작 원리
 
 1. 설치된 `codex.exe`를 찾아 로컬 app-server를 시작합니다.
 2. `initialize`와 `initialized`로 연결을 준비합니다.
@@ -124,7 +130,9 @@ SmartScreen 경고가 표시될 수 있습니다.
 - 로그에는 허용된 상태 코드와 숫자만 기록합니다.
 - 이메일, 계정 식별자, 초기화권 ID, 원본 프로토콜, 사용자 폴더 경로를 로그에
   남기지 않습니다.
-- 설정과 상태는 현재 사용자의 `%LocalAppData%\CodexResetGuard`에 저장합니다.
+- 설정과 상태는 현재 사용자의 로컬 앱 데이터 폴더에 저장합니다. 0.1.0과의
+  호환성을 위해 실제 데이터 폴더 이름은 `%LocalAppData%\CodexResetGuard`로
+  유지되며, 이름이 바뀌어도 설정과 안전 기록은 초기화되지 않습니다.
 - 임의 JSON-RPC 메서드를 보낼 수 있는 기능은 제공하지 않습니다.
 
 ## 문제가 생겼을 때
@@ -143,7 +151,7 @@ Codex가 설치되어 있고 정상적으로 로그인되는지 먼저 확인하
 
 ### Windows가 실행을 막습니다
 
-파일명이 `CodexResetGuard-Setup-x64.exe`인지, 이 저장소의 Release에서
+파일명이 `CodexAutoReset-Setup-x64.exe`인지, 이 저장소의 Release에서
 다운로드했는지 확인하세요. 출처가 다르거나 해시가 일치하지 않으면 실행하지 마세요.
 
 ## 소스에서 빌드하기
@@ -151,10 +159,10 @@ Codex가 설치되어 있고 정상적으로 로그인되는지 먼저 확인하
 .NET 8.0.423 SDK가 필요합니다.
 
 ```powershell
-dotnet restore CodexResetGuard.sln --locked-mode
-dotnet build CodexResetGuard.sln -c Release --no-restore
-dotnet test CodexResetGuard.sln -c Release --no-build
-dotnet format CodexResetGuard.sln --no-restore --verify-no-changes
+dotnet restore CodexAutoReset.sln --locked-mode
+dotnet build CodexAutoReset.sln -c Release --no-restore
+dotnet test CodexAutoReset.sln -c Release --no-build
+dotnet format CodexAutoReset.sln --no-restore --verify-no-changes
 ```
 
 Windows 설치 파일과 Portable ZIP을 만들려면 Inno Setup 6을 설치한 뒤 실행합니다.
@@ -168,6 +176,6 @@ winget install --id JRSoftware.InnoSetup --exact
 
 ## 라이선스
 
-CodexResetGuard의 소스 코드는 [Apache License 2.0](LICENSE)으로 배포합니다.
+CodexAutoReset의 소스 코드는 [Apache License 2.0](LICENSE)으로 배포합니다.
 자체 포함 Windows 패키지에는 사용된 .NET 런타임 라이선스와 제3자 고지문도 함께
 포함됩니다.

@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <RootNamespace>CodexAutoReset.Runtime</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App" />
+    <ProjectReference Include="..\CodexAutoReset.Core\CodexAutoReset.Core.csproj" />
+    <ProjectReference Include="..\CodexAutoReset.AppServer\CodexAutoReset.AppServer.csproj" />
+  </ItemGroup>
+</Project>

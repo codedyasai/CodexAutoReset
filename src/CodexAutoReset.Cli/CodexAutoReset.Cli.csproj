@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <RootNamespace>CodexAutoReset.Cli</RootNamespace>
+    <AssemblyName>codex-auto-reset</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\CodexAutoReset.Core\CodexAutoReset.Core.csproj" />
+    <ProjectReference Include="..\CodexAutoReset.AppServer\CodexAutoReset.AppServer.csproj" />
+    <ProjectReference Include="..\CodexAutoReset.Runtime\CodexAutoReset.Runtime.csproj" />
+  </ItemGroup>
+</Project>

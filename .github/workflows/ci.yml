@@ -25,13 +25,13 @@ jobs:
           dotnet-version: 8.0.423
 
       - name: Restore locked dependencies
-        run: dotnet restore CodexResetGuard.sln --locked-mode
+        run: dotnet restore CodexAutoReset.sln --locked-mode
 
       - name: Build
-        run: dotnet build CodexResetGuard.sln -c Release --no-restore
+        run: dotnet build CodexAutoReset.sln -c Release --no-restore
 
       - name: Test
-        run: dotnet test CodexResetGuard.sln -c Release --no-build
+        run: dotnet test CodexAutoReset.sln -c Release --no-build
 
       - name: Verify formatting
-        run: dotnet format CodexResetGuard.sln --no-restore --verify-no-changes
+        run: dotnet format CodexAutoReset.sln --no-restore --verify-no-changes

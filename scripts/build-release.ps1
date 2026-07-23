@@ -2,7 +2,7 @@
 param(
     [Parameter()]
     [ValidatePattern('^\d+\.\d+\.\d+$')]
-    [string]$Version = '0.1.0',
+    [string]$Version = '0.2.0',
 
     [Parameter()]
     [string]$InnoCompilerPath
@@ -49,8 +49,8 @@ function Invoke-DotNet {
     }
 }
 
-if (-not (Test-Path -LiteralPath (Join-Path $repositoryRoot 'CodexResetGuard.sln'))) {
-    throw 'The release script must run from the CodexResetGuard repository.'
+if (-not (Test-Path -LiteralPath (Join-Path $repositoryRoot 'CodexAutoReset.sln'))) {
+    throw 'The release script must run from the CodexAutoReset repository.'
 }
 
 Reset-ArtifactDirectory -Path $publishDirectory
@@ -59,31 +59,31 @@ Reset-ArtifactDirectory -Path $releaseDirectory
 
 Push-Location $repositoryRoot
 try {
-    Invoke-DotNet -Arguments @('restore', 'CodexResetGuard.sln', '--locked-mode')
+    Invoke-DotNet -Arguments @('restore', 'CodexAutoReset.sln', '--locked-mode')
     Invoke-DotNet -Arguments @(
         'build',
-        'CodexResetGuard.sln',
+        'CodexAutoReset.sln',
         '-c', 'Release',
         '--no-restore',
         "-p:Version=$Version")
     Invoke-DotNet -Arguments @(
         'test',
-        'CodexResetGuard.sln',
+        'CodexAutoReset.sln',
         '-c', 'Release',
         '--no-build')
     Invoke-DotNet -Arguments @(
         'format',
-        'CodexResetGuard.sln',
+        'CodexAutoReset.sln',
         '--no-restore',
         '--verify-no-changes')
     Invoke-DotNet -Arguments @(
         'restore',
-        'src\CodexResetGuard.Desktop\CodexResetGuard.Desktop.csproj',
+        'src\CodexAutoReset.Desktop\CodexAutoReset.Desktop.csproj',
         '-r', 'win-x64',
         '--locked-mode')
     Invoke-DotNet -Arguments @(
         'publish',
-        'src\CodexResetGuard.Desktop\CodexResetGuard.Desktop.csproj',
+        'src\CodexAutoReset.Desktop\CodexAutoReset.Desktop.csproj',
         '-c', 'Release',
         '--no-restore',
         '-p:PublishProfile=win-x64',
@@ -109,7 +109,18 @@ if ($forbiddenFiles) {
     throw "Forbidden runtime or debug files were published: $($forbiddenFiles.FullName -join ', ')"
 }
 
-$portableArchive = Join-Path $releaseDirectory 'CodexResetGuard-Portable-x64.zip'
+$mainExecutable = Join-Path $publishDirectory 'CodexAutoReset.exe'
+if (-not (Test-Path -LiteralPath $mainExecutable -PathType Leaf)) {
+    throw "The published application executable was not found: $mainExecutable"
+}
+
+$legacyBrandedFiles = Get-ChildItem -LiteralPath $publishDirectory -Recurse -File |
+    Where-Object { $_.Name -like 'CodexResetGuard*' }
+if ($legacyBrandedFiles) {
+    throw "Legacy-branded files were published: $($legacyBrandedFiles.FullName -join ', ')"
+}
+
+$portableArchive = Join-Path $releaseDirectory 'CodexAutoReset-Portable-x64.zip'
 Compress-Archive -Path (Join-Path $publishDirectory '*') `
     -DestinationPath $portableArchive `
     -CompressionLevel Optimal
@@ -135,7 +146,7 @@ if (-not (Test-Path -LiteralPath $InnoCompilerPath -PathType Leaf)) {
     throw "Inno Setup compiler was not found: $InnoCompilerPath"
 }
 
-$installerScript = Join-Path $repositoryRoot 'installer\CodexResetGuard.iss'
+$installerScript = Join-Path $repositoryRoot 'installer\CodexAutoReset.iss'
 & $InnoCompilerPath `
     "/DAppVersion=$Version" `
     "/DPublishDir=$publishDirectory" `
@@ -144,12 +155,12 @@ if ($LASTEXITCODE -ne 0) {
     throw "Inno Setup failed with exit code $LASTEXITCODE"
 }
 
-$compiledInstaller = Join-Path $installerDirectory 'CodexResetGuard-Setup-x64.exe'
+$compiledInstaller = Join-Path $installerDirectory 'CodexAutoReset-Setup-x64.exe'
 if (-not (Test-Path -LiteralPath $compiledInstaller -PathType Leaf)) {
     throw "The installer was not produced: $compiledInstaller"
 }
 
-$releaseInstaller = Join-Path $releaseDirectory 'CodexResetGuard-Setup-x64.exe'
+$releaseInstaller = Join-Path $releaseDirectory 'CodexAutoReset-Setup-x64.exe'
 Copy-Item -LiteralPath $compiledInstaller -Destination $releaseInstaller
 
 $checksumFile = Join-Path $releaseDirectory 'SHA256SUMS.txt'

@@ -10,7 +10,7 @@ public static class AppServerProtocolParser
     private const int MaximumUserAgentLength = 1_024;
     private const string ExpectedServerProduct = "Codex Desktop";
     private const string ExpectedClientName = "codex_auto_reset";
-    internal const string AuditedConsumeSchemaVersion = "0.144.5";
+    public static string AuditedConsumeSchemaVersion { get; } = "0.144.5";
 
     private static readonly string[] ResponseResultProperties = ["id", "result"];
     private static readonly string[] ResponseErrorProperties = ["id", "error"];
@@ -172,7 +172,8 @@ public static class AppServerProtocolParser
 
     public static AccountRateLimits ParseRateLimits(
         JsonElement result,
-        DateTimeOffset observedAt)
+        DateTimeOffset observedAt,
+        bool consumeSchemaCompatible = true)
     {
         EnsureNoDuplicateProperties(result);
         ValidateObjectShape(
@@ -193,7 +194,8 @@ public static class AppServerProtocolParser
             legacy,
             byLimitId,
             resetCredits,
-            observedAt);
+            observedAt,
+            consumeSchemaCompatible);
     }
 
     public static ConsumeResetCreditResult ParseConsumeResetCredit(

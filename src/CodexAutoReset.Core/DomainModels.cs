@@ -21,7 +21,8 @@ public sealed record GuardSettings(
     UiLanguage UiLanguage,
     bool StartWithWindows,
     string? CodexExecutablePath,
-    bool AutomationEnabled = false)
+    bool AutomationEnabled = false,
+    bool NotifyOnUsageReset = true)
 {
     public const int MinimumThreshold = 1;
     public const int MaximumThreshold = 100;
@@ -34,7 +35,8 @@ public sealed record GuardSettings(
         UiLanguage: UiLanguage.Auto,
         StartWithWindows: false,
         CodexExecutablePath: null,
-        AutomationEnabled: false);
+        AutomationEnabled: false,
+        NotifyOnUsageReset: true);
 }
 
 public sealed record RateLimitWindow(
@@ -65,7 +67,8 @@ public sealed record AccountRateLimits(
     RateLimitSnapshot LegacyRateLimits,
     IReadOnlyDictionary<string, RateLimitSnapshot>? RateLimitsByLimitId,
     ResetCreditSummary? ResetCredits,
-    DateTimeOffset ObservedAt);
+    DateTimeOffset ObservedAt,
+    bool ConsumeSchemaCompatible = true);
 
 public sealed record WindowReading(
     double UsedPercent,

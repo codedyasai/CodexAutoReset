@@ -76,6 +76,56 @@ public sealed class SettingsUpdateServiceTests
     }
 
     [TestMethod]
+    public async Task FieldPatches_MergeLatestSettingsWithoutTouchingRegistry()
+    {
+        var codexPath = Path.Combine(temporaryDirectory, "codex.exe");
+        File.WriteAllBytes(codexPath, [0]);
+        var persisted = GuardSettings.Default with
+        {
+            StartWithWindows = true,
+            AutomationEnabled = true,
+            CodexExecutablePath = codexPath,
+        };
+        var registry = new CountingRegistryStore();
+        registry.Seed(
+            StartupService.RunSubKey,
+            StartupService.RunValueName,
+            "foreign-command.exe");
+        var service = new SettingsUpdateService(
+            new StartupService(registry),
+            _ => Task.FromResult(persisted),
+            (settings, _) =>
+            {
+                persisted = settings;
+                return Task.CompletedTask;
+            });
+
+        await service.SaveRemainingThresholdPercentAsync(
+            22,
+            CancellationToken.None);
+        await service.SavePollIntervalMinutesAsync(
+            13,
+            CancellationToken.None);
+        await service.SaveAutomationEnabledAsync(
+            automationEnabled: false,
+            CancellationToken.None);
+        await service.SaveNotifyOnUsageResetAsync(
+            notifyOnUsageReset: false,
+            CancellationToken.None);
+
+        Assert.AreEqual(22, persisted.RemainingThresholdPercent);
+        Assert.AreEqual(13, persisted.PollIntervalMinutes);
+        Assert.IsFalse(persisted.AutomationEnabled);
+        Assert.IsFalse(persisted.NotifyOnUsageReset);
+        Assert.IsTrue(persisted.StartWithWindows);
+        Assert.AreEqual(codexPath, persisted.CodexExecutablePath);
+        Assert.AreEqual(0, registry.WriteCount);
+        Assert.AreEqual(
+            "foreign-command.exe",
+            registry.GetString(StartupService.RunSubKey, StartupService.RunValueName));
+    }
+
+    [TestMethod]
     public async Task SaveAsync_UnchangedStartupDoesNotTouchForeignRegistryValue()
     {
         var registry = new CountingRegistryStore();

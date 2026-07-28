@@ -159,6 +159,104 @@ public sealed class AppServerTransportTests
     }
 
     [TestMethod]
+    public void StandalonePackageDiscoveryUsesValidatedPhysicalReleaseTarget()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var profileRoot = System.IO.Path.Combine(directory.Path, "profile");
+        var releaseRoot = System.IO.Path.Combine(
+            profileRoot,
+            ".codex",
+            "packages",
+            "standalone",
+            "releases",
+            "0.144.5-x86_64-pc-windows-msvc");
+        var executablePath = System.IO.Path.Combine(
+            releaseRoot,
+            "bin",
+            "codex.exe");
+        System.IO.Directory.CreateDirectory(
+            System.IO.Path.GetDirectoryName(executablePath)!);
+        File.WriteAllBytes(executablePath, [0]);
+
+        var paths = CodexExecutableLocator.BuildStandalonePackageInstallationPaths(
+            _ => releaseRoot,
+            profileRoot,
+            profileRoot.ToUpperInvariant());
+
+        Assert.AreEqual(1, paths.Count);
+        Assert.AreEqual(executablePath, paths[0]);
+    }
+
+    [TestMethod]
+    public void StandalonePackageDiscoveryRejectsTargetOutsideReleaseRoot()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var profileRoot = System.IO.Path.Combine(directory.Path, "profile");
+        var outsideRoot = System.IO.Path.Combine(directory.Path, "outside-release");
+        var executablePath = System.IO.Path.Combine(
+            outsideRoot,
+            "bin",
+            "codex.exe");
+        System.IO.Directory.CreateDirectory(
+            System.IO.Path.GetDirectoryName(executablePath)!);
+        File.WriteAllBytes(executablePath, [0]);
+
+        var paths = CodexExecutableLocator.BuildStandalonePackageInstallationPaths(
+            _ => outsideRoot,
+            profileRoot);
+
+        Assert.AreEqual(0, paths.Count);
+    }
+
+    [TestMethod]
+    public void ReparseFreeValidationRejectsNestedReparsePoint()
+    {
+        var root = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(),
+            "CodexAutoReset-profile");
+        var executablePath = System.IO.Path.Combine(
+            root,
+            ".codex",
+            "packages",
+            "standalone",
+            "releases",
+            "0.144.5-x86_64-pc-windows-msvc",
+            "bin",
+            "codex.exe");
+
+        var safe = CodexExecutableLocator.IsReparseFreePath(
+            root,
+            executablePath,
+            requireLeafFile: true,
+            path => path.EndsWith(
+                    $"{System.IO.Path.DirectorySeparatorChar}bin",
+                    StringComparison.OrdinalIgnoreCase)
+                ? FileAttributes.Directory | FileAttributes.ReparsePoint
+                : string.Equals(
+                    path,
+                    executablePath,
+                    StringComparison.OrdinalIgnoreCase)
+                    ? FileAttributes.Archive
+                    : FileAttributes.Directory);
+
+        Assert.IsFalse(safe);
+    }
+
+    [TestMethod]
+    public void FilePickerUsesAccessibleCanonicalExecutable()
+    {
+        using var executable = TemporaryCodexExecutable.Create();
+
+        var suggestion = CodexExecutableLocator.TryGetFilePickerExecutablePath(
+            executable.Path);
+
+        Assert.IsNotNull(suggestion);
+        Assert.AreEqual(
+            System.IO.Path.GetFullPath(executable.Path),
+            System.IO.Path.GetFullPath(suggestion));
+    }
+
+    [TestMethod]
     public async Task LegacyStringClientCannotPerformMutation()
     {
         using var temporaryExecutable = TemporaryCodexExecutable.Create();
@@ -174,6 +272,25 @@ public sealed class AppServerTransportTests
         Assert.AreEqual(
             AppServerFailureCategory.UntrustedExecutableForMutation,
             exception.Category);
+        Assert.AreEqual(AppServerOperation.Mutation, exception.Operation);
+    }
+
+    [TestMethod]
+    public async Task ReadFailuresPreserveTheReadOperation()
+    {
+        using var temporaryExecutable = TemporaryCodexExecutable.Create();
+        await using var client = new CodexAppServerClient(
+            temporaryExecutable.Path,
+            temporaryExecutable.Directory,
+            requestTimeout: TimeSpan.FromSeconds(2));
+
+        var exception = await Assert.ThrowsExceptionAsync<AppServerException>(
+            () => client.ReadAsync(CancellationToken.None));
+
+        Assert.AreEqual(
+            AppServerFailureCategory.StartFailed,
+            exception.Category);
+        Assert.AreEqual(AppServerOperation.Read, exception.Operation);
     }
 
     [TestMethod]

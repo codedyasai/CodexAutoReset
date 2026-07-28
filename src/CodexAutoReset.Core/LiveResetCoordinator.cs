@@ -68,6 +68,19 @@ public sealed class LiveResetCoordinator
                 return CreateResult(LiveResetCycleKind.AutomationDisabled, evaluation);
             }
 
+            if (!snapshot.ConsumeSchemaCompatible)
+            {
+                return new LiveResetCycleResult(
+                    LiveResetCycleKind.Blocked,
+                    evaluation,
+                    Attempt: null,
+                    Outcome: null,
+                    ConsumeAttempted: false,
+                    RequiresRefresh: false,
+                    RefreshedRateLimits: null,
+                    LiveAttemptBlockReason.ProtocolMismatch);
+            }
+
             await store.MarkRefreshedAsync(
                 snapshot.ObservedAt,
                 now,

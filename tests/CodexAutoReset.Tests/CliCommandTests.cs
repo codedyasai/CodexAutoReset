@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using System.Text.Json;
 using CodexAutoReset.AppServer;
 using CodexAutoReset.Cli;
 using CodexAutoReset.Core;
@@ -158,6 +159,159 @@ public sealed class CliCommandTests
             new AppServerException(category));
 
         Assert.AreEqual(expected, actual);
+    }
+
+    [TestMethod]
+    public async Task ProtocolMismatchWithoutLiveAttemptDoesNotCreateSafetyMarker()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var markerPath = Path.Combine(
+            directory.Path,
+            "live-safety-block.json");
+        var store = new JsonLiveAttemptStore(
+            Path.Combine(directory.Path, "live-state.json"));
+        var latch = Program.CreateLiveSafetyLatch(directory.Path);
+        var coordinator = new LiveResetCoordinator(
+            new ResetDecisionEngine(),
+            store,
+            new FakeSecretProtector(),
+            new FakeAccountRateLimitClient(
+                ConsumeResetCreditOutcome.NothingToReset),
+            new FakeFailureClassifier(),
+            safetyLatch: latch);
+
+        await Program.PreserveOrBlockPendingAsync(
+            coordinator,
+            LiveResetFailureDisposition.ProtocolMismatch);
+
+        Assert.IsNull(latch.BlockReason);
+        Assert.IsFalse(File.Exists(markerPath));
+        Assert.AreEqual(
+            0,
+            (await store.ReadAsync(CancellationToken.None)).Count);
+    }
+
+    [TestMethod]
+    public async Task ProtocolMismatchWithPendingAttemptCreatesRevisionAwareMarker()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var now = DateTimeOffset.UtcNow;
+        var resetAt = now.AddDays(5).ToUnixTimeSeconds();
+        var store = new JsonLiveAttemptStore(
+            Path.Combine(directory.Path, "live-state.json"));
+        await store.TryPrepareAsync(
+            new LiveAttemptCandidate(
+                FormattableString.Invariant(
+                    $"codex|weekly|10080|{resetAt}"),
+                GuardSettings.Default.RemainingThresholdPercent,
+                10_080,
+                resetAt),
+            "test-credit",
+            new FakeSecretProtector(),
+            now,
+            CancellationToken.None);
+        var latch = Program.CreateLiveSafetyLatch(directory.Path);
+        var coordinator = new LiveResetCoordinator(
+            new ResetDecisionEngine(),
+            store,
+            new FakeSecretProtector(),
+            new FakeAccountRateLimitClient(
+                ConsumeResetCreditOutcome.NothingToReset),
+            new FakeFailureClassifier(),
+            safetyLatch: latch);
+
+        await Program.PreserveOrBlockPendingAsync(
+            coordinator,
+            LiveResetFailureDisposition.ProtocolMismatch);
+
+        Assert.AreEqual(
+            LiveAttemptBlockReason.ProtocolMismatch,
+            latch.BlockReason);
+        var attempt = (await store.ReadAsync(CancellationToken.None)).Single();
+        Assert.AreEqual(LiveAttemptPhase.ProtocolBlocked, attempt.Phase);
+        Assert.AreEqual(
+            LiveAttemptBlockReason.ProtocolMismatch,
+            attempt.BlockReason);
+
+        var expectedRevision = string.Concat(
+            typeof(Program).Assembly.GetName().Version?.ToString(3)
+                ?? "0.0.0",
+            "|",
+            AppServerProtocolParser.AuditedConsumeSchemaVersion);
+        Assert.AreEqual(expectedRevision, Program.CompatibilityRevision);
+        using var marker = JsonDocument.Parse(
+            await File.ReadAllTextAsync(
+                Path.Combine(directory.Path, "live-safety-block.json")));
+        Assert.AreEqual(
+            3,
+            marker.RootElement.GetProperty("schemaVersion").GetInt32());
+        Assert.AreEqual(
+            expectedRevision,
+            marker.RootElement
+                .GetProperty("compatibilityRevision")
+                .GetString());
+        Assert.AreEqual(
+            "mutationAmbiguous",
+            marker.RootElement.GetProperty("origin").GetString());
+    }
+
+    [TestMethod]
+    public async Task FailedLiveStateReadStillCreatesFailClosedMarker()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var statePath = Path.Combine(directory.Path, "live-state.json");
+        await File.WriteAllTextAsync(statePath, "{malformed");
+        var latch = Program.CreateLiveSafetyLatch(directory.Path);
+        var coordinator = new LiveResetCoordinator(
+            new ResetDecisionEngine(),
+            new JsonLiveAttemptStore(statePath),
+            new FakeSecretProtector(),
+            new FakeAccountRateLimitClient(
+                ConsumeResetCreditOutcome.NothingToReset),
+            new FakeFailureClassifier(),
+            safetyLatch: latch);
+
+        await Program.PreserveOrBlockPendingAsync(
+            coordinator,
+            LiveResetFailureDisposition.ProtocolMismatch);
+
+        Assert.AreEqual(
+            LiveAttemptBlockReason.ProtocolMismatch,
+            latch.BlockReason);
+        Assert.IsTrue(File.Exists(
+            Path.Combine(directory.Path, "live-safety-block.json")));
+    }
+
+    [TestMethod]
+    public void ProtocolMismatchWithoutCoordinatorDoesNotLatchButUnknownStillDoes()
+    {
+        using var protocolDirectory = TemporaryDirectory.Create();
+        var protocolLatch = Program.CreateLiveSafetyLatch(
+            protocolDirectory.Path);
+
+        Program.LatchFailure(
+            protocolLatch,
+            LiveResetFailureDisposition.ProtocolMismatch);
+
+        Assert.IsNull(protocolLatch.BlockReason);
+        Assert.IsFalse(File.Exists(Path.Combine(
+            protocolDirectory.Path,
+            "live-safety-block.json")));
+
+        using var unknownDirectory = TemporaryDirectory.Create();
+        var unknownLatch = Program.CreateLiveSafetyLatch(
+            unknownDirectory.Path);
+
+        Program.LatchFailure(
+            unknownLatch,
+            LiveResetFailureDisposition.Unknown);
+
+        Assert.AreEqual(
+            LiveAttemptBlockReason.UnknownFailure,
+            unknownLatch.BlockReason);
+        Assert.IsTrue(File.Exists(Path.Combine(
+            unknownDirectory.Path,
+            "live-safety-block.json")));
     }
 
     [DataTestMethod]

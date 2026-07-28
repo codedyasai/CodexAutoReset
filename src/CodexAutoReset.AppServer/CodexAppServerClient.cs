@@ -95,7 +95,8 @@ public sealed class CodexAppServerClient : IAccountRateLimitClient
                     .ConfigureAwait(false);
                 return AppServerProtocolParser.ParseRateLimits(
                     result,
-                    DateTimeOffset.UtcNow);
+                    DateTimeOffset.UtcNow,
+                    consumeSchemaCompatible);
             }
             catch (OperationCanceledException exception)
                 when (!cancellationToken.IsCancellationRequested)
@@ -103,10 +104,12 @@ public sealed class CodexAppServerClient : IAccountRateLimitClient
                 await StopProcessAsync().ConfigureAwait(false);
                 throw new AppServerException(
                     AppServerFailureCategory.Timeout,
-                    innerException: exception);
+                    innerException: exception,
+                    operation: AppServerOperation.Read);
             }
-            catch (AppServerException)
+            catch (AppServerException exception)
             {
+                exception.AttachOperation(AppServerOperation.Read);
                 await StopProcessAsync().ConfigureAwait(false);
                 throw;
             }
@@ -115,7 +118,8 @@ public sealed class CodexAppServerClient : IAccountRateLimitClient
                 await StopProcessAsync().ConfigureAwait(false);
                 throw new AppServerException(
                     AppServerFailureCategory.IoError,
-                    innerException: exception);
+                    innerException: exception,
+                    operation: AppServerOperation.Read);
             }
         }
         finally
@@ -164,10 +168,12 @@ public sealed class CodexAppServerClient : IAccountRateLimitClient
                 await StopProcessAsync().ConfigureAwait(false);
                 throw new AppServerException(
                     AppServerFailureCategory.Timeout,
-                    innerException: exception);
+                    innerException: exception,
+                    operation: AppServerOperation.Mutation);
             }
-            catch (AppServerException)
+            catch (AppServerException exception)
             {
+                exception.AttachOperation(AppServerOperation.Mutation);
                 await StopProcessAsync().ConfigureAwait(false);
                 throw;
             }
@@ -176,7 +182,8 @@ public sealed class CodexAppServerClient : IAccountRateLimitClient
                 await StopProcessAsync().ConfigureAwait(false);
                 throw new AppServerException(
                     AppServerFailureCategory.IoError,
-                    innerException: exception);
+                    innerException: exception,
+                    operation: AppServerOperation.Mutation);
             }
         }
         finally

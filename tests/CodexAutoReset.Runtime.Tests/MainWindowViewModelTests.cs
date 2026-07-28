@@ -64,7 +64,6 @@ public sealed class MainWindowViewModelTests
 
         Assert.IsTrue(selected, errorMessage);
         Assert.IsTrue(viewModel.HasCustomCodexExecutablePath);
-        Assert.AreEqual("연결 방식 · 직접 지정", viewModel.CodexExecutableModeText);
         Assert.AreNotEqual(codexPath, viewModel.CodexExecutableDisplayText);
         Assert.IsFalse(
             viewModel.CodexExecutableDisplayText.Contains(
@@ -92,11 +91,40 @@ public sealed class MainWindowViewModelTests
         Assert.IsNull(automaticSettings.CodexExecutablePath);
         Assert.IsFalse(automaticSettings.AutomationEnabled);
         Assert.IsFalse(viewModel.HasCustomCodexExecutablePath);
-        Assert.AreEqual("연결 방식 · 자동 찾기", viewModel.CodexExecutableModeText);
     }
 
     [TestMethod]
-    public async Task CodexAutomaticSelection_ConflictRestoresPersistedCustomPath()
+    public async Task CodexExecutableAutomaticDisplay_DoesNotDescribeConnectionMode()
+    {
+        using var directory = new TemporaryDirectory();
+        var paths = RuntimePaths.ForTesting(directory.Path);
+        var settingsStore = new JsonSettingsStore(paths.SettingsFile);
+        await settingsStore.SaveAsync(GuardSettings.Default, CancellationToken.None);
+        await using var monitor = new GuardMonitorService(
+            settingsStore,
+            new ImmediateCycleExecutor(),
+            GuardSettings.Default);
+        var viewModel = new MainWindowViewModel(
+            settingsStore,
+            new StartupService(new MemoryRegistryStore()),
+            monitor,
+            GuardSettings.Default);
+
+        Assert.IsFalse(
+            viewModel.CodexExecutableDisplayText.Contains(
+                "자동으로 찾",
+                StringComparison.Ordinal));
+        var userProfile = Environment.GetFolderPath(
+            Environment.SpecialFolder.UserProfile);
+        Assert.IsTrue(
+            string.IsNullOrWhiteSpace(userProfile)
+            || !viewModel.CodexExecutableDisplayText.Contains(
+                userProfile,
+                StringComparison.OrdinalIgnoreCase));
+    }
+
+    [TestMethod]
+    public async Task CodexAutomaticSelection_MergesExternalSettingsAndClearsPath()
     {
         using var directory = new TemporaryDirectory();
         var paths = RuntimePaths.ForTesting(directory.Path);
@@ -126,13 +154,18 @@ public sealed class MainWindowViewModelTests
         viewModel.UseAutomaticCodexExecutablePath();
         Assert.IsFalse(viewModel.HasCustomCodexExecutablePath);
 
-        Assert.IsFalse(await viewModel.SaveCodexExecutablePathAsync());
+        Assert.IsTrue(await viewModel.SaveCodexExecutablePathAsync());
 
-        Assert.IsTrue(viewModel.HasCustomCodexExecutablePath);
-        Assert.AreEqual(codexPath, viewModel.ConfiguredCodexExecutablePath);
-        Assert.AreEqual(externallyChanged, await settingsStore.LoadAsync(CancellationToken.None));
+        var expected = externallyChanged with
+        {
+            CodexExecutablePath = null,
+        };
+        Assert.IsFalse(viewModel.HasCustomCodexExecutablePath);
+        Assert.IsNull(viewModel.ConfiguredCodexExecutablePath);
+        Assert.AreEqual(expected, await settingsStore.LoadAsync(CancellationToken.None));
+        Assert.AreEqual("42", viewModel.ThresholdText);
         Assert.IsTrue(viewModel.CanEditCodexConnection);
-        StringAssert.Contains(viewModel.CodexConnectionStatus, "다시 선택");
+        StringAssert.Contains(viewModel.CodexConnectionStatus, "저장했습니다");
     }
 
     [TestMethod]
@@ -197,6 +230,324 @@ public sealed class MainWindowViewModelTests
             out _));
         Assert.IsFalse(viewModel.TrySetCodexExecutablePath("codex.exe", out _));
         Assert.IsNull(viewModel.ConfiguredCodexExecutablePath);
+    }
+
+    [TestMethod]
+    public async Task AutomaticSettings_ApplyIndividuallyWithoutSaveButton()
+    {
+        using var directory = new TemporaryDirectory();
+        var paths = RuntimePaths.ForTesting(directory.Path);
+        var settingsStore = new JsonSettingsStore(paths.SettingsFile);
+        await settingsStore.SaveAsync(GuardSettings.Default, CancellationToken.None);
+        await using var monitor = new GuardMonitorService(
+            settingsStore,
+            new ImmediateCycleExecutor(),
+            GuardSettings.Default);
+        var viewModel = new MainWindowViewModel(
+            settingsStore,
+            new StartupService(new MemoryRegistryStore()),
+            monitor,
+            GuardSettings.Default);
+
+        viewModel.ThresholdText = "18";
+        Assert.IsTrue(await viewModel.SaveThresholdAsync());
+        viewModel.PollIntervalText = "11";
+        Assert.IsTrue(await viewModel.SavePollIntervalAsync());
+
+        var persisted = await settingsStore.LoadAsync(CancellationToken.None);
+        Assert.AreEqual(18, persisted.RemainingThresholdPercent);
+        Assert.AreEqual(11, persisted.PollIntervalMinutes);
+        Assert.IsFalse(persisted.AutomationEnabled);
+        Assert.IsFalse(persisted.StartWithWindows);
+        Assert.IsNull(persisted.CodexExecutablePath);
+    }
+
+    [TestMethod]
+    public async Task AutomaticSettings_InvalidNumericTextDoesNotOverwritePersistedValues()
+    {
+        using var directory = new TemporaryDirectory();
+        var paths = RuntimePaths.ForTesting(directory.Path);
+        var settingsStore = new JsonSettingsStore(paths.SettingsFile);
+        await settingsStore.SaveAsync(GuardSettings.Default, CancellationToken.None);
+        await using var monitor = new GuardMonitorService(
+            settingsStore,
+            new ImmediateCycleExecutor(),
+            GuardSettings.Default);
+        var viewModel = new MainWindowViewModel(
+            settingsStore,
+            new StartupService(new MemoryRegistryStore()),
+            monitor,
+            GuardSettings.Default);
+
+        viewModel.ThresholdText = string.Empty;
+        Assert.IsFalse(await viewModel.SaveThresholdAsync());
+        viewModel.PollIntervalText = "61";
+        Assert.IsFalse(await viewModel.SavePollIntervalAsync());
+
+        Assert.AreEqual(
+            GuardSettings.Default,
+            await settingsStore.LoadAsync(CancellationToken.None));
+        StringAssert.Contains(viewModel.SaveStatus, "1~60분");
+    }
+
+    [TestMethod]
+    public async Task AutomaticSettings_QueuedChangesPersistLatestFieldsWithoutLoss()
+    {
+        using var directory = new TemporaryDirectory();
+        var paths = RuntimePaths.ForTesting(directory.Path);
+        var settingsStore = new JsonSettingsStore(paths.SettingsFile);
+        await settingsStore.SaveAsync(GuardSettings.Default, CancellationToken.None);
+        var executor = new BlockingCycleExecutor();
+        await using var monitor = new GuardMonitorService(
+            settingsStore,
+            executor,
+            GuardSettings.Default);
+        var viewModel = new MainWindowViewModel(
+            settingsStore,
+            new StartupService(new MemoryRegistryStore()),
+            monitor,
+            GuardSettings.Default);
+        var cycleTask = monitor.RefreshAsync();
+        await executor.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        viewModel.ThresholdText = "23";
+        var thresholdTask = viewModel.SaveThresholdAsync();
+        viewModel.PollIntervalText = "17";
+        var pollTask = viewModel.SavePollIntervalAsync();
+
+        Assert.IsFalse(thresholdTask.IsCompleted);
+        Assert.IsFalse(pollTask.IsCompleted);
+        executor.Release.TrySetResult();
+        await cycleTask;
+        Assert.IsTrue(await thresholdTask);
+        Assert.IsTrue(await pollTask);
+
+        var persisted = await settingsStore.LoadAsync(CancellationToken.None);
+        Assert.AreEqual(23, persisted.RemainingThresholdPercent);
+        Assert.AreEqual(17, persisted.PollIntervalMinutes);
+    }
+
+    [TestMethod]
+    public async Task AutomaticSettings_RevertedValueWhileSaveWaitsIsNotLost()
+    {
+        using var directory = new TemporaryDirectory();
+        var paths = RuntimePaths.ForTesting(directory.Path);
+        var settingsStore = new JsonSettingsStore(paths.SettingsFile);
+        await settingsStore.SaveAsync(GuardSettings.Default, CancellationToken.None);
+        var executor = new BlockingCycleExecutor();
+        await using var monitor = new GuardMonitorService(
+            settingsStore,
+            executor,
+            GuardSettings.Default);
+        var viewModel = new MainWindowViewModel(
+            settingsStore,
+            new StartupService(new MemoryRegistryStore()),
+            monitor,
+            GuardSettings.Default);
+        var cycleTask = monitor.RefreshAsync();
+        await executor.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        viewModel.ThresholdText = "23";
+        var firstSave = viewModel.SaveThresholdAsync();
+        viewModel.ThresholdText = "7";
+        var revertedSave = viewModel.SaveThresholdAsync();
+
+        Assert.IsFalse(firstSave.IsCompleted);
+        Assert.IsFalse(revertedSave.IsCompleted);
+        executor.Release.TrySetResult();
+        await cycleTask;
+        Assert.IsTrue(await firstSave);
+        Assert.IsTrue(await revertedSave);
+
+        Assert.AreEqual("7", viewModel.ThresholdText);
+        Assert.AreEqual(
+            7,
+            (await settingsStore.LoadAsync(CancellationToken.None))
+                .RemainingThresholdPercent);
+    }
+
+    [TestMethod]
+    public async Task AutomaticSettings_RiskyThresholdIncreaseRequiresConfirmation()
+    {
+        using var directory = new TemporaryDirectory();
+        var paths = RuntimePaths.ForTesting(directory.Path);
+        var settingsStore = new JsonSettingsStore(paths.SettingsFile);
+        var settings = GuardSettings.Default with
+        {
+            AutomationEnabled = true,
+        };
+        await settingsStore.SaveAsync(settings, CancellationToken.None);
+        var resetAt = DateTimeOffset.UtcNow.AddDays(2).ToUnixTimeSeconds();
+        var weekly = new WindowReading(
+            72.4,
+            27.6,
+            10_080,
+            10_080,
+            resetAt);
+        await using var monitor = new GuardMonitorService(
+            settingsStore,
+            new ImmediateCycleExecutor(weekly, availableCreditCount: 1),
+            settings);
+        var viewModel = new MainWindowViewModel(
+            settingsStore,
+            new StartupService(new MemoryRegistryStore()),
+            monitor,
+            settings);
+        await monitor.RefreshAsync();
+
+        viewModel.ThresholdText = "30";
+
+        Assert.IsTrue(viewModel.RequiresThresholdChangeConfirmation());
+        Assert.IsFalse(await viewModel.SaveThresholdAsync());
+        Assert.AreEqual("7", viewModel.ThresholdText);
+        Assert.AreEqual(
+            7,
+            (await settingsStore.LoadAsync(CancellationToken.None))
+                .RemainingThresholdPercent);
+        StringAssert.Contains(viewModel.SaveStatus, "확인");
+
+        viewModel.ThresholdText = "30";
+        Assert.IsTrue(await viewModel.SaveThresholdAsync(
+            immediateResetRiskConfirmed: true));
+        Assert.AreEqual(
+            30,
+            (await settingsStore.LoadAsync(CancellationToken.None))
+                .RemainingThresholdPercent);
+    }
+
+    [TestMethod]
+    public async Task AutomaticSettings_EnablingAutomationStillRequiresConfirmation()
+    {
+        using var directory = new TemporaryDirectory();
+        var paths = RuntimePaths.ForTesting(directory.Path);
+        var settingsStore = new JsonSettingsStore(paths.SettingsFile);
+        await settingsStore.SaveAsync(GuardSettings.Default, CancellationToken.None);
+        await using var monitor = new GuardMonitorService(
+            settingsStore,
+            new ImmediateCycleExecutor(),
+            GuardSettings.Default);
+        var viewModel = new MainWindowViewModel(
+            settingsStore,
+            new StartupService(new MemoryRegistryStore()),
+            monitor,
+            GuardSettings.Default);
+
+        Assert.IsFalse(await viewModel.SetAutomationEnabledAsync(enabled: true));
+        Assert.IsFalse(
+            (await settingsStore.LoadAsync(CancellationToken.None)).AutomationEnabled);
+        StringAssert.Contains(viewModel.SaveStatus, "확인");
+
+        Assert.IsTrue(await viewModel.SetAutomationEnabledAsync(
+            enabled: true,
+            automationEnableConfirmed: true));
+        Assert.IsTrue(
+            (await settingsStore.LoadAsync(CancellationToken.None)).AutomationEnabled);
+
+        Assert.IsTrue(await viewModel.SetAutomationEnabledAsync(enabled: false));
+        Assert.IsFalse(
+            (await settingsStore.LoadAsync(CancellationToken.None)).AutomationEnabled);
+    }
+
+    [TestMethod]
+    public async Task UsageResetNotification_AppliesImmediatelyWithoutClearingUsage()
+    {
+        using var directory = new TemporaryDirectory();
+        var paths = RuntimePaths.ForTesting(directory.Path);
+        var settingsStore = new JsonSettingsStore(paths.SettingsFile);
+        await settingsStore.SaveAsync(GuardSettings.Default, CancellationToken.None);
+        var weekly = new WindowReading(
+            42,
+            58,
+            10_080,
+            10_080,
+            DateTimeOffset.UtcNow.AddDays(2).ToUnixTimeSeconds());
+        await using var monitor = new GuardMonitorService(
+            settingsStore,
+            new ImmediateCycleExecutor(weekly),
+            GuardSettings.Default);
+        var viewModel = new MainWindowViewModel(
+            settingsStore,
+            new StartupService(new MemoryRegistryStore()),
+            monitor,
+            GuardSettings.Default);
+        await monitor.RefreshAsync();
+        var observedAt = monitor.CurrentSnapshot.ObservedAt;
+
+        Assert.IsTrue(await viewModel.SetNotifyOnUsageResetAsync(enabled: false));
+
+        Assert.IsFalse(viewModel.NotifyOnUsageReset);
+        Assert.IsFalse(
+            (await settingsStore.LoadAsync(CancellationToken.None)).NotifyOnUsageReset);
+        Assert.AreEqual(58, monitor.CurrentSnapshot.Weekly?.RemainingPercent);
+        Assert.AreEqual(observedAt, monitor.CurrentSnapshot.ObservedAt);
+        Assert.AreEqual("no_action", monitor.CurrentSnapshot.StatusCode);
+    }
+
+    [TestMethod]
+    public async Task CurrentSnapshot_ReturnsTheSnapshotAppliedToTheViewModel()
+    {
+        using var directory = new TemporaryDirectory();
+        var paths = RuntimePaths.ForTesting(directory.Path);
+        var settingsStore = new JsonSettingsStore(paths.SettingsFile);
+        await settingsStore.SaveAsync(GuardSettings.Default, CancellationToken.None);
+        await using var monitor = new GuardMonitorService(
+            settingsStore,
+            new ImmediateCycleExecutor(),
+            GuardSettings.Default);
+        var viewModel = new MainWindowViewModel(
+            settingsStore,
+            new StartupService(new MemoryRegistryStore()),
+            monitor,
+            GuardSettings.Default);
+        var appliedSnapshot = MonitorSnapshot.Waiting(GuardSettings.Default) with
+        {
+            StatusCode = "applied_snapshot",
+        };
+        var applySnapshot = typeof(MainWindowViewModel).GetMethod(
+            "ApplySnapshot",
+            System.Reflection.BindingFlags.Instance
+                | System.Reflection.BindingFlags.NonPublic);
+
+        Assert.IsNotNull(applySnapshot);
+        applySnapshot.Invoke(viewModel, [appliedSnapshot]);
+
+        Assert.AreSame(appliedSnapshot, viewModel.CurrentSnapshot);
+        Assert.AreNotSame(appliedSnapshot, monitor.CurrentSnapshot);
+    }
+
+    [TestMethod]
+    public async Task RefreshNowAsync_ShowsBusyStateAndBlocksReentryUntilComplete()
+    {
+        using var directory = new TemporaryDirectory();
+        var paths = RuntimePaths.ForTesting(directory.Path);
+        var settingsStore = new JsonSettingsStore(paths.SettingsFile);
+        await settingsStore.SaveAsync(GuardSettings.Default, CancellationToken.None);
+        var executor = new BlockingCycleExecutor();
+        await using var monitor = new GuardMonitorService(
+            settingsStore,
+            executor,
+            GuardSettings.Default);
+        var viewModel = new MainWindowViewModel(
+            settingsStore,
+            new StartupService(new MemoryRegistryStore()),
+            monitor,
+            GuardSettings.Default);
+
+        var refreshTask = viewModel.RefreshNowAsync();
+        await executor.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.IsTrue(viewModel.IsRefreshing);
+        Assert.IsFalse(viewModel.CanRefresh);
+        Assert.AreEqual("확인 중…", viewModel.RefreshStatusText);
+        Assert.AreEqual("주간 사용량 새로고침 중", viewModel.RefreshAutomationName);
+        await viewModel.RefreshNowAsync();
+        Assert.IsFalse(refreshTask.IsCompleted);
+
+        executor.Release.TrySetResult();
+        await refreshTask;
+        Assert.IsFalse(viewModel.IsRefreshing);
+        Assert.IsTrue(viewModel.CanRefresh);
+        Assert.AreEqual(string.Empty, viewModel.RefreshStatusText);
     }
 
     [TestMethod]
@@ -416,7 +767,7 @@ public sealed class MainWindowViewModelTests
     }
 
     [TestMethod]
-    public async Task WeeklySnapshot_UpdatesRemainingProgressAndResetText()
+    public async Task WeeklySnapshot_UsesIntegerPercentTextAndUpdatesResetStatus()
     {
         using var directory = new TemporaryDirectory();
         var paths = RuntimePaths.ForTesting(directory.Path);
@@ -424,8 +775,8 @@ public sealed class MainWindowViewModelTests
         await settingsStore.SaveAsync(GuardSettings.Default, CancellationToken.None);
         var resetAt = DateTimeOffset.UtcNow.AddDays(2).ToUnixTimeSeconds();
         var weekly = new WindowReading(
-            58.75,
-            41.25,
+            0,
+            100,
             10_080,
             10_080,
             resetAt);
@@ -441,19 +792,21 @@ public sealed class MainWindowViewModelTests
 
         await monitor.RefreshAsync();
 
-        Assert.AreEqual($"{41.25:F1}%", viewModel.WeeklyRemainingText);
-        Assert.AreEqual(41.25, viewModel.WeeklyRemainingPercent);
+        Assert.AreEqual("100%", viewModel.WeeklyRemainingText);
+        Assert.AreEqual(100, viewModel.WeeklyRemainingPercent);
         StringAssert.Contains(viewModel.WeeklyResetStatus, "다음 갱신 예정");
         Assert.AreEqual("0", viewModel.CreditStatus);
     }
 
-    private static GuardCycleResult CreateResult(WindowReading? weekly = null)
+    private static GuardCycleResult CreateResult(
+        WindowReading? weekly = null,
+        int availableCreditCount = 0)
     {
         var observedAt = DateTimeOffset.UtcNow;
         var rateLimits = new AccountRateLimits(
             new RateLimitSnapshot("codex", "Codex", null, null),
             null,
-            new ResetCreditSummary(0, []),
+            new ResetCreditSummary(availableCreditCount, []),
             observedAt);
         var evaluation = new EvaluationResult(
             weekly,
@@ -463,7 +816,7 @@ public sealed class MainWindowViewModelTests
                 null,
                 null,
                 null),
-            0);
+            availableCreditCount);
         return new GuardCycleResult(
             rateLimits,
             evaluation,
@@ -474,15 +827,20 @@ public sealed class MainWindowViewModelTests
     private sealed class ImmediateCycleExecutor : IGuardCycleExecutor
     {
         private readonly WindowReading? weekly;
+        private readonly int availableCreditCount;
 
-        public ImmediateCycleExecutor(WindowReading? weekly = null)
+        public ImmediateCycleExecutor(
+            WindowReading? weekly = null,
+            int availableCreditCount = 0)
         {
             this.weekly = weekly;
+            this.availableCreditCount = availableCreditCount;
         }
 
         public Task<GuardCycleResult> ExecuteAsync(
             GuardSettings settings,
-            CancellationToken cancellationToken) => Task.FromResult(CreateResult(weekly));
+            CancellationToken cancellationToken) =>
+            Task.FromResult(CreateResult(weekly, availableCreditCount));
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }

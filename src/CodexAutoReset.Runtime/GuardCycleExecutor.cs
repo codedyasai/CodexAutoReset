@@ -5,14 +5,26 @@ namespace CodexAutoReset.Runtime;
 
 public sealed class GuardCycleExecutor : IGuardCycleExecutor
 {
+    private static readonly TimeSpan CompatibilityVerificationDelay =
+        TimeSpan.FromSeconds(10);
+    private static readonly string CompatibilityRevision =
+        string.Concat(
+            typeof(GuardCycleExecutor).Assembly.GetName().Version?.ToString(3)
+                ?? "0.0.0",
+            "|",
+            AppServerProtocolParser.AuditedConsumeSchemaVersion);
+
     private readonly IRateLimitClientFactory clientFactory;
     private readonly ISecretProtector secretProtector;
     private readonly ILiveResetFailureClassifier failureClassifier;
     private readonly TimeProvider timeProvider;
     private readonly ResetDecisionEngine decisionEngine = new();
     private readonly JsonLiveAttemptStore liveStore;
+    private readonly JsonWeeklyUsageResetTracker weeklyUsageResetTracker;
     private readonly SafeJsonlLogger logger;
     private readonly LiveResetSafetyLatch liveSafetyLatch;
+    private string? readCompatibilityCandidateCode;
+    private DateTimeOffset? readCompatibilityEligibleAt;
 
     public GuardCycleExecutor(RuntimePaths paths)
         : this(
@@ -40,7 +52,11 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
             ?? throw new ArgumentNullException(nameof(failureClassifier));
         this.timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
         liveStore = new JsonLiveAttemptStore(paths.LiveStateFile);
-        liveSafetyLatch = new LiveResetSafetyLatch(paths.LiveSafetyBlockFile);
+        weeklyUsageResetTracker = new JsonWeeklyUsageResetTracker(
+            paths.UsageResetStateFile);
+        liveSafetyLatch = new LiveResetSafetyLatch(
+            paths.LiveSafetyBlockFile,
+            CompatibilityRevision);
         logger = new SafeJsonlLogger(paths.LogDirectory);
     }
 
@@ -59,56 +75,180 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
             }
             catch (Exception readException) when (!IsFatal(readException))
             {
-                await BlockPendingAfterReadFailureAsync(
+                var promotedException =
+                    await HandleReadFailureAsync(
                     settings,
                     client,
                     readException).ConfigureAwait(false);
+                if (promotedException is not null)
+                {
+                    throw promotedException;
+                }
+
                 throw;
             }
             var now = timeProvider.GetUtcNow();
+            var initialEvaluation = decisionEngine.Evaluate(
+                settings,
+                snapshot,
+                now);
+            var usageResetDetection = await TryObserveWeeklyUsageAsync(
+                snapshot,
+                initialEvaluation.Weekly,
+                WeeklyUsageResetAttribution.None,
+                cancellationToken).ConfigureAwait(false);
 
             GuardCycleResult result;
-            if (!settings.AutomationEnabled)
+            var semanticCompatibilityCode =
+                GetSemanticCompatibilityCode(
+                    initialEvaluation.Decision.Reason);
+            if (!snapshot.ConsumeSchemaCompatible)
             {
+                ResetReadCompatibilityFailures();
+                var hasUnresolvedAttempt =
+                    await HasUnresolvedAttemptAsync(cancellationToken)
+                        .ConfigureAwait(false);
+                if (hasUnresolvedAttempt)
+                {
+                    await BlockProtocolMismatchAsync(client)
+                        .ConfigureAwait(false);
+                }
+
                 result = new GuardCycleResult(
                     snapshot,
-                    decisionEngine.Evaluate(settings, snapshot, now),
-                    CycleActionKind.None,
-                    "automation_disabled");
+                    initialEvaluation,
+                    CycleActionKind.Blocked,
+                    "mutation_schema_unverified");
+            }
+            else if (semanticCompatibilityCode is not null)
+            {
+                var hasUnresolvedAttempt =
+                    await HasUnresolvedAttemptAsync(cancellationToken)
+                        .ConfigureAwait(false);
+                var compatibilityConfirmed =
+                    liveSafetyLatch.BlockReason
+                        == LiveAttemptBlockReason.ProtocolMismatch
+                    || hasUnresolvedAttempt
+                    || RegisterReadCompatibilityFailure(
+                        semanticCompatibilityCode,
+                        settings);
+                if (compatibilityConfirmed && hasUnresolvedAttempt)
+                {
+                    await BlockProtocolMismatchAsync(client)
+                        .ConfigureAwait(false);
+                }
+
+                result = new GuardCycleResult(
+                    snapshot,
+                    initialEvaluation,
+                    compatibilityConfirmed
+                        ? CycleActionKind.Blocked
+                        : CycleActionKind.None,
+                    compatibilityConfirmed
+                        ? "protocol_read_unsupported"
+                        : "protocol_verification_pending");
             }
             else
             {
-                var coordinator = new LiveResetCoordinator(
-                    decisionEngine,
-                    liveStore,
-                    secretProtector,
-                    client,
-                    failureClassifier,
-                    timeProvider,
-                    liveSafetyLatch);
-                try
+                ResetReadCompatibilityFailures();
+                var attempts = await liveStore.ReadAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                var hasUnresolvedAttempt = attempts.Any(
+                    attempt => attempt.Phase != LiveAttemptPhase.Terminal);
+                liveSafetyLatch.TryClearProtocolMismatch(
+                    compatibilityValidationSucceeded: true,
+                    hasUnresolvedAttempt);
+
+                if (liveSafetyLatch.BlockReason
+                    == LiveAttemptBlockReason.ProtocolMismatch)
                 {
-                    var liveResult = await coordinator.ExecuteAsync(
-                        settings,
+                    result = new GuardCycleResult(
                         snapshot,
-                        now,
-                        cancellationToken).ConfigureAwait(false);
-                    result = MapLiveResult(settings, snapshot, liveResult, now);
+                        initialEvaluation,
+                        CycleActionKind.Blocked,
+                        "live_protocol_blocked");
                 }
-                catch (OperationCanceledException)
+                else if (!settings.AutomationEnabled)
                 {
-                    throw;
-                }
-                catch (Exception exception) when (
-                    !IsFatal(exception) && IsRetryableFailure(exception))
-                {
-                    result = await CreateRetryPendingResultAsync(
-                        settings,
+                    result = new GuardCycleResult(
                         snapshot,
-                        now,
-                        coordinator).ConfigureAwait(false);
+                        initialEvaluation,
+                        CycleActionKind.None,
+                        "automation_disabled");
+                }
+                else
+                {
+                    var coordinator = new LiveResetCoordinator(
+                        decisionEngine,
+                        liveStore,
+                        secretProtector,
+                        client,
+                        failureClassifier,
+                        timeProvider,
+                        liveSafetyLatch);
+                    try
+                    {
+                        var liveResult = await coordinator.ExecuteAsync(
+                            settings,
+                            snapshot,
+                            now,
+                            cancellationToken).ConfigureAwait(false);
+                        result = MapLiveResult(settings, snapshot, liveResult, now);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (AppServerException exception) when (
+                        exception.Operation == AppServerOperation.Mutation
+                        && ClassifyFailure(exception)
+                            == LiveResetFailureDisposition.ProtocolMismatch)
+                    {
+                        result = new GuardCycleResult(
+                            snapshot,
+                            initialEvaluation,
+                            CycleActionKind.Blocked,
+                            "mutation_schema_unverified");
+                    }
+                    catch (Exception exception) when (
+                        !IsFatal(exception) && IsRetryableFailure(exception))
+                    {
+                        result = await CreateRetryPendingResultAsync(
+                            settings,
+                            snapshot,
+                            now,
+                            coordinator).ConfigureAwait(false);
+                    }
                 }
             }
+
+            var hasRefreshedObservation =
+                !ReferenceEquals(snapshot, result.AccountRateLimits);
+            if (hasRefreshedObservation)
+            {
+                var refreshedDetection = await TryObserveWeeklyUsageAsync(
+                    result.AccountRateLimits,
+                    result.Evaluation.Weekly,
+                    result.ActionKind == CycleActionKind.ResetSucceeded
+                        ? WeeklyUsageResetAttribution.AutomaticCreditSucceeded
+                        : WeeklyUsageResetAttribution.None,
+                    result.ActionKind == CycleActionKind.ResetSucceeded
+                        ? CancellationToken.None
+                        : cancellationToken).ConfigureAwait(false);
+                usageResetDetection = PreferUsageResetDetection(
+                    usageResetDetection,
+                    refreshedDetection);
+            }
+            else if (result.ActionKind == CycleActionKind.ResetSucceeded)
+            {
+                await TryMarkAutomaticCreditSucceededAsync(
+                    timeProvider.GetUtcNow()).ConfigureAwait(false);
+            }
+
+            result = result with
+            {
+                UsageResetDetection = usageResetDetection,
+            };
 
             var auditToken = result.ActionKind is
                 CycleActionKind.ResetSucceeded or CycleActionKind.ResetNoEffect
@@ -135,6 +275,70 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+
+    private async Task<WeeklyUsageResetDetection?> TryObserveWeeklyUsageAsync(
+        AccountRateLimits snapshot,
+        WindowReading? weekly,
+        WeeklyUsageResetAttribution attribution,
+        CancellationToken cancellationToken)
+    {
+        if (weekly is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var tracking = await weeklyUsageResetTracker.ObserveAsync(
+                new WeeklyUsageObservation(
+                    weekly.RemainingPercent,
+                    weekly.ResetsAt,
+                    snapshot.ObservedAt),
+                attribution,
+                cancellationToken).ConfigureAwait(false);
+            return tracking.Detection;
+        }
+        catch (OperationCanceledException)
+            when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception) when (!IsFatal(exception))
+        {
+            return null;
+        }
+    }
+
+    private async Task TryMarkAutomaticCreditSucceededAsync(
+        DateTimeOffset succeededAt)
+    {
+        try
+        {
+            _ = await weeklyUsageResetTracker.MarkAutomaticCreditSucceededAsync(
+                succeededAt,
+                CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (!IsFatal(exception))
+        {
+        }
+    }
+
+    private static WeeklyUsageResetDetection? PreferUsageResetDetection(
+        WeeklyUsageResetDetection? first,
+        WeeklyUsageResetDetection? second)
+    {
+        if (second?.Kind == WeeklyUsageResetKind.AutomaticCredit)
+        {
+            return second;
+        }
+
+        if (first?.Kind == WeeklyUsageResetKind.AutomaticCredit)
+        {
+            return first;
+        }
+
+        return second ?? first;
+    }
 
     private GuardCycleResult MapLiveResult(
         GuardSettings settings,
@@ -297,32 +501,83 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
         or StackOverflowException
         or AccessViolationException;
 
-    private async Task BlockPendingAfterReadFailureAsync(
+    private async Task<Exception?> HandleReadFailureAsync(
         GuardSettings settings,
         IAccountRateLimitClient client,
         Exception exception)
     {
-        if (!settings.AutomationEnabled)
-        {
-            return;
-        }
-
         if (exception is OperationCanceledException)
         {
-            return;
+            return null;
         }
 
         var disposition = ClassifyFailure(exception);
-        var reason = disposition switch
+        if (disposition == LiveResetFailureDisposition.ProtocolMismatch)
         {
-            LiveResetFailureDisposition.ProtocolMismatch =>
-                LiveAttemptBlockReason.ProtocolMismatch,
-            LiveResetFailureDisposition.Unknown => LiveAttemptBlockReason.UnknownFailure,
-            _ => (LiveAttemptBlockReason?)null,
-        };
-        if (reason is null)
+            var hasUnresolvedAttempt =
+                await HasUnresolvedAttemptAsync(CancellationToken.None)
+                    .ConfigureAwait(false);
+            var confirmed =
+                liveSafetyLatch.BlockReason
+                    == LiveAttemptBlockReason.ProtocolMismatch
+                || hasUnresolvedAttempt
+                || RegisterReadCompatibilityFailure(
+                    GetReadCompatibilityFailureCode(exception),
+                    settings);
+            if (confirmed && hasUnresolvedAttempt)
+            {
+                await BlockProtocolMismatchAsync(client).ConfigureAwait(false);
+            }
+
+            if (hasUnresolvedAttempt
+                && exception is AppServerException appServerException)
+            {
+                return new AppServerException(
+                    appServerException.Category,
+                    appServerException.RemoteCode,
+                    appServerException,
+                    AppServerOperation.Mutation);
+            }
+
+            return null;
+        }
+
+        ResetReadCompatibilityFailures();
+        if (settings.AutomationEnabled
+            && disposition == LiveResetFailureDisposition.Unknown)
         {
-            return;
+            await BlockFailureAsync(
+                client,
+                LiveAttemptBlockReason.UnknownFailure).ConfigureAwait(false);
+        }
+
+        return null;
+    }
+
+    private async Task<bool> HasUnresolvedAttemptAsync(
+        CancellationToken cancellationToken)
+    {
+        var attempts = await liveStore.ReadAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return attempts.Any(
+            attempt => attempt.Phase != LiveAttemptPhase.Terminal);
+    }
+
+    private Task BlockProtocolMismatchAsync(
+        IAccountRateLimitClient client) =>
+        BlockFailureAsync(
+            client,
+            LiveAttemptBlockReason.ProtocolMismatch);
+
+    private async Task BlockFailureAsync(
+        IAccountRateLimitClient client,
+        LiveAttemptBlockReason reason)
+    {
+        if (reason is not (
+            LiveAttemptBlockReason.ProtocolMismatch
+            or LiveAttemptBlockReason.UnknownFailure))
+        {
+            throw new ArgumentOutOfRangeException(nameof(reason));
         }
 
         var coordinator = new LiveResetCoordinator(
@@ -334,10 +589,64 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
             timeProvider,
             liveSafetyLatch);
         await coordinator.BlockPendingAsync(
-            reason.Value,
+            reason,
             timeProvider.GetUtcNow(),
             CancellationToken.None).ConfigureAwait(false);
     }
+
+    private bool RegisterReadCompatibilityFailure(
+        string candidateCode,
+        GuardSettings settings)
+    {
+        var contextCode = string.Concat(
+            candidateCode,
+            "|",
+            settings.CodexExecutablePath?.ToUpperInvariant() ?? "<AUTO>");
+        var now = timeProvider.GetUtcNow();
+        if (!string.Equals(
+            readCompatibilityCandidateCode,
+            contextCode,
+            StringComparison.Ordinal))
+        {
+            readCompatibilityCandidateCode = contextCode;
+            readCompatibilityEligibleAt =
+                now.Add(CompatibilityVerificationDelay);
+            return false;
+        }
+
+        return readCompatibilityEligibleAt is { } eligibleAt
+            && now >= eligibleAt;
+    }
+
+    private void ResetReadCompatibilityFailures()
+    {
+        readCompatibilityCandidateCode = null;
+        readCompatibilityEligibleAt = null;
+    }
+
+    private static string GetReadCompatibilityFailureCode(
+        Exception exception) => exception is AppServerException appServerException
+        ? string.Concat(
+            appServerException.Category,
+            ":",
+            appServerException.RemoteCode?.ToString(
+                System.Globalization.CultureInfo.InvariantCulture)
+                ?? "none")
+        : exception.GetType().Name;
+
+    private static string? GetSemanticCompatibilityCode(
+        DecisionReason reason) => reason switch
+        {
+            DecisionReason.CodexBucketMissing => "codex_bucket_missing",
+            DecisionReason.CodexBucketMismatch => "codex_bucket_mismatch",
+            DecisionReason.AmbiguousLegacyBucket => "ambiguous_legacy_bucket",
+            DecisionReason.SelectedWindowMissing => "selected_window_missing",
+            DecisionReason.SelectedWindowAmbiguous => "selected_window_ambiguous",
+            DecisionReason.InvalidUsedPercent => "invalid_used_percent",
+            DecisionReason.InvalidResetTime => "invalid_reset_time",
+            DecisionReason.InvalidCreditCount => "invalid_credit_count",
+            _ => null,
+        };
 
     private LiveResetFailureDisposition ClassifyFailure(Exception exception)
     {
@@ -361,6 +670,9 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
         "duplicate_suppressed" => "duplicate_suppressed",
         "live_blocked" => "live_blocked",
         "live_protocol_blocked" => "live_protocol_blocked",
+        "protocol_read_unsupported" => "protocol_read_unsupported",
+        "protocol_verification_pending" => "protocol_verification_pending",
+        "mutation_schema_unverified" => "mutation_schema_unverified",
         "live_context_changed" => "live_context_changed",
         "live_secret_unavailable" => "live_secret_unavailable",
         "live_dispatch_limit" => "live_dispatch_limit",

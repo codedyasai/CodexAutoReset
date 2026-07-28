@@ -44,6 +44,7 @@ public sealed class CodexExecutableResolution
 
 public static class CodexExecutableLocator
 {
+    private const string CodexExecutableFileName = "codex.exe";
     private const string ExtendedPathPrefix = @"\\?\";
     private const string ExtendedUncPrefix = @"\\?\UNC\";
     private const int MaximumCanonicalPathLength = 32_768;
@@ -55,10 +56,21 @@ public static class CodexExecutableLocator
     {
         if (configuredPath is not null)
         {
-            return ResolveExistingCandidate(
-                configuredPath,
-                CodexExecutableDiscoverySource.ExplicitConfiguration,
-                Path.IsPathFullyQualified(configuredPath));
+            try
+            {
+                return ResolveExistingCandidate(
+                    configuredPath,
+                    CodexExecutableDiscoverySource.ExplicitConfiguration,
+                    Path.IsPathFullyQualified(configuredPath));
+            }
+            catch (AppServerException exception) when (
+                exception.Category == AppServerFailureCategory.ExecutableNotFound
+                && IsKnownInstallerPathShape(configuredPath))
+            {
+                // Codex updates replace the physical standalone release directory.
+                // Recover only known Codex installer paths; arbitrary configured
+                // paths must still fail instead of silently changing executables.
+            }
         }
 
         foreach (var standardPath in GetRecognizedInstallationPaths())
@@ -73,6 +85,40 @@ public static class CodexExecutableLocator
         }
 
         throw new AppServerException(AppServerFailureCategory.ExecutableNotFound);
+    }
+
+    public static string? TryGetFilePickerExecutablePath(string? configuredPath)
+    {
+        if (!string.IsNullOrWhiteSpace(configuredPath))
+        {
+            try
+            {
+                var fullPath = Path.GetFullPath(configuredPath);
+                if (IsCodexExecutable(fullPath)
+                    && TryGetCanonicalPath(fullPath, out var canonicalPath)
+                    && IsCodexExecutable(canonicalPath))
+                {
+                    return canonicalPath;
+                }
+            }
+            catch (Exception exception) when (
+                exception is ArgumentException
+                    or NotSupportedException
+                    or PathTooLongException
+                    or System.Security.SecurityException)
+            {
+            }
+        }
+
+        try
+        {
+            return Resolve(configuredPath: null).ExecutablePath;
+        }
+        catch (AppServerException exception) when (
+            exception.Category == AppServerFailureCategory.ExecutableNotFound)
+        {
+            return null;
+        }
     }
 
     internal static CodexExecutableResolution ResolveExistingCandidate(
@@ -156,7 +202,7 @@ public static class CodexExecutableLocator
                     "OpenAI",
                     "Codex",
                     "bin",
-                    "codex.exe");
+                    CodexExecutableFileName);
                 if (seen.Add(path))
                 {
                     paths.Add(path);
@@ -166,6 +212,65 @@ public static class CodexExecutableLocator
                 exception is ArgumentException
                     or NotSupportedException
                     or PathTooLongException)
+            {
+            }
+        }
+
+        return paths;
+    }
+
+    internal static IReadOnlyList<string> BuildStandalonePackageInstallationPaths(
+        params string?[] userProfileRoots) =>
+        BuildStandalonePackageInstallationPaths(
+            TryResolveImmediateDirectoryLinkTarget,
+            userProfileRoots);
+
+    internal static IReadOnlyList<string> BuildStandalonePackageInstallationPaths(
+        Func<string, string?> resolveImmediateDirectoryLinkTarget,
+        params string?[] userProfileRoots)
+    {
+        ArgumentNullException.ThrowIfNull(resolveImmediateDirectoryLinkTarget);
+
+        var paths = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var root in userProfileRoots)
+        {
+            if (string.IsNullOrWhiteSpace(root)
+                || !Path.IsPathFullyQualified(root))
+            {
+                continue;
+            }
+
+            try
+            {
+                var fullRoot = Path.GetFullPath(root);
+                var standaloneRoot = Path.Combine(
+                    fullRoot,
+                    ".codex",
+                    "packages",
+                    "standalone");
+                var currentPath = Path.Combine(standaloneRoot, "current");
+                var target = resolveImmediateDirectoryLinkTarget(currentPath);
+                if (target is null
+                    || !TryBuildStandalonePhysicalExecutablePath(
+                        fullRoot,
+                        standaloneRoot,
+                        target,
+                        out var executablePath)
+                    || !seen.Add(executablePath))
+                {
+                    continue;
+                }
+
+                paths.Add(executablePath);
+            }
+            catch (Exception exception) when (
+                exception is ArgumentException
+                    or IOException
+                    or NotSupportedException
+                    or PathTooLongException
+                    or UnauthorizedAccessException
+                    or System.Security.SecurityException)
             {
             }
         }
@@ -191,11 +296,35 @@ public static class CodexExecutableLocator
                 ? null
                 : Path.Combine(userProfileEnvironment, "AppData", "Local");
 
-        return BuildRecognizedInstallationPaths(
+        var paths = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        AddRecognizedPaths(
+            paths,
+            seen,
+            BuildStandalonePackageInstallationPaths(
+                userProfile,
+                userProfileEnvironment));
+
+        foreach (var legacyPath in BuildRecognizedInstallationPaths(
             localAppData,
             localAppDataEnvironment,
             conventionalLocalAppData,
-            conventionalEnvironmentLocalAppData);
+            conventionalEnvironmentLocalAppData))
+        {
+            var localRoot = TryGetLegacyLocalAppDataRoot(legacyPath);
+            if (localRoot is not null
+                && IsReparseFreePath(
+                    localRoot,
+                    legacyPath,
+                    requireLeafFile: true)
+                && seen.Add(legacyPath))
+            {
+                paths.Add(legacyPath);
+            }
+        }
+
+        return paths;
     }
 
     private static bool IsRecognizedCanonicalPath(string canonicalPath)
@@ -276,6 +405,229 @@ public static class CodexExecutableLocator
         return false;
     }
 
+    private static string? TryResolveImmediateDirectoryLinkTarget(string path)
+    {
+        try
+        {
+            return new DirectoryInfo(path)
+                .ResolveLinkTarget(returnFinalTarget: false)
+                ?.FullName;
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException
+                or IOException
+                or NotSupportedException
+                or PathTooLongException
+                or UnauthorizedAccessException
+                or System.Security.SecurityException)
+        {
+            return null;
+        }
+    }
+
+    private static bool TryBuildStandalonePhysicalExecutablePath(
+        string userProfileRoot,
+        string standaloneRoot,
+        string currentTarget,
+        out string executablePath)
+    {
+        executablePath = string.Empty;
+
+        string fullUserProfileRoot;
+        string fullStandaloneRoot;
+        string releasesRoot;
+        string targetRoot;
+        try
+        {
+            fullUserProfileRoot = TrimEndingDirectorySeparator(
+                Path.GetFullPath(userProfileRoot));
+            fullStandaloneRoot = TrimEndingDirectorySeparator(
+                Path.GetFullPath(standaloneRoot));
+            releasesRoot = TrimEndingDirectorySeparator(
+                Path.Combine(fullStandaloneRoot, "releases"));
+            targetRoot = TrimEndingDirectorySeparator(
+                Path.GetFullPath(currentTarget));
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException
+                or NotSupportedException
+                or PathTooLongException)
+        {
+            return false;
+        }
+
+        if (!string.Equals(
+                Path.GetDirectoryName(targetRoot),
+                releasesRoot,
+                StringComparison.OrdinalIgnoreCase)
+            || string.IsNullOrWhiteSpace(Path.GetFileName(targetRoot)))
+        {
+            return false;
+        }
+
+        var candidate = Path.Combine(
+            targetRoot,
+            "bin",
+            CodexExecutableFileName);
+        if (!IsReparseFreePath(
+                fullUserProfileRoot,
+                candidate,
+                requireLeafFile: true)
+            || !IsCodexExecutable(candidate)
+            || !TryGetCanonicalPath(candidate, out var canonicalPath)
+            || !string.Equals(
+                TrimEndingDirectorySeparator(canonicalPath),
+                TrimEndingDirectorySeparator(candidate),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        executablePath = candidate;
+        return true;
+    }
+
+    private static bool IsReparseFreePath(
+        string trustedRoot,
+        string candidatePath,
+        bool requireLeafFile) =>
+        IsReparseFreePath(
+            trustedRoot,
+            candidatePath,
+            requireLeafFile,
+            File.GetAttributes);
+
+    internal static bool IsReparseFreePath(
+        string trustedRoot,
+        string candidatePath,
+        bool requireLeafFile,
+        Func<string, FileAttributes> getAttributes)
+    {
+        ArgumentNullException.ThrowIfNull(getAttributes);
+
+        string root;
+        string candidate;
+        try
+        {
+            root = TrimEndingDirectorySeparator(Path.GetFullPath(trustedRoot));
+            candidate = Path.GetFullPath(candidatePath);
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException
+                or NotSupportedException
+                or PathTooLongException)
+        {
+            return false;
+        }
+
+        var relative = Path.GetRelativePath(root, candidate);
+        if (relative == "."
+            || relative == ".."
+            || relative.StartsWith(
+                string.Concat("..", Path.DirectorySeparatorChar),
+                StringComparison.Ordinal)
+            || Path.IsPathFullyQualified(relative))
+        {
+            return false;
+        }
+
+        var current = root;
+        var segments = relative.Split(
+            [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+            StringSplitOptions.RemoveEmptyEntries);
+        try
+        {
+            for (var index = 0; index < segments.Length; index++)
+            {
+                current = Path.Combine(current, segments[index]);
+                var attributes = getAttributes(current);
+                if ((attributes & FileAttributes.ReparsePoint) != 0)
+                {
+                    return false;
+                }
+
+                var isLeaf = index == segments.Length - 1;
+                if (isLeaf
+                    && requireLeafFile
+                    && (attributes & FileAttributes.Directory) != 0)
+                {
+                    return false;
+                }
+            }
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException
+                or IOException
+                or NotSupportedException
+                or PathTooLongException
+                or UnauthorizedAccessException
+                or System.Security.SecurityException)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static string? TryGetLegacyLocalAppDataRoot(string executablePath)
+    {
+        var suffix = Path.Combine(
+            "Programs",
+            "OpenAI",
+            "Codex",
+            "bin",
+            CodexExecutableFileName);
+        if (!executablePath.EndsWith(
+                suffix,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var rootLength = executablePath.Length - suffix.Length;
+        return rootLength > 0
+            ? executablePath[..rootLength]
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            : null;
+    }
+
+    private static bool IsKnownInstallerPathShape(string path)
+    {
+        if (!Path.IsPathFullyQualified(path)
+            || !string.Equals(
+                Path.GetFileName(path),
+                CodexExecutableFileName,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var normalized = path.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+        return normalized.Contains(
+                Path.Combine("Programs", "OpenAI", "Codex", "bin"),
+                StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains(
+                Path.Combine(".codex", "packages", "standalone", "releases"),
+                StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void AddRecognizedPaths(
+        List<string> destination,
+        HashSet<string> seen,
+        IEnumerable<string> candidates)
+    {
+        foreach (var candidate in candidates)
+        {
+            if (seen.Add(candidate))
+            {
+                destination.Add(candidate);
+            }
+        }
+    }
+
+    private static string TrimEndingDirectorySeparator(string path) =>
+        Path.TrimEndingDirectorySeparator(path);
+
     private static string NormalizeExtendedPath(string path)
     {
         if (path.StartsWith(ExtendedUncPrefix, StringComparison.OrdinalIgnoreCase))
@@ -291,7 +643,7 @@ public static class CodexExecutableLocator
     private static bool IsCodexExecutable(string path) =>
         string.Equals(
             Path.GetFileName(path),
-            "codex.exe",
+            CodexExecutableFileName,
             StringComparison.OrdinalIgnoreCase)
         && File.Exists(path);
 

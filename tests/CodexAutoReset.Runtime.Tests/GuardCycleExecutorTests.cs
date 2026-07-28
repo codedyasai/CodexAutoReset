@@ -69,6 +69,44 @@ public sealed class GuardCycleExecutorTests
     }
 
     [TestMethod]
+    public async Task ExecuteAsync_PropagatesExternalResetOnceAfterBaseline()
+    {
+        var previousResetAt = Now.AddDays(2);
+        var nextResetAt = Now.AddDays(7);
+        var factory = new SequencedSnapshotClientFactory(
+        [
+            CreateSnapshot(75, Now.AddMinutes(-1), previousResetAt),
+            CreateSnapshot(5, Now, nextResetAt),
+            CreateSnapshot(5, Now.AddMinutes(1), nextResetAt),
+        ]);
+        var executor = CreateExecutor(factory);
+
+        var baseline = await executor.ExecuteAsync(
+            GuardSettings.Default,
+            CancellationToken.None);
+        Assert.IsTrue(File.Exists(paths.UsageResetStateFile));
+        var detected = await executor.ExecuteAsync(
+            GuardSettings.Default,
+            CancellationToken.None);
+        var duplicate = await executor.ExecuteAsync(
+            GuardSettings.Default,
+            CancellationToken.None);
+
+        Assert.IsNull(baseline.UsageResetDetection);
+        Assert.AreEqual(
+            nextResetAt.ToUnixTimeSeconds(),
+            detected.Evaluation.Weekly?.ResetsAt);
+        Assert.AreEqual(95, detected.Evaluation.Weekly?.RemainingPercent);
+        Assert.AreEqual(
+            WeeklyUsageResetKind.Early,
+            detected.UsageResetDetection?.Kind);
+        Assert.AreEqual(
+            nextResetAt.ToUnixTimeSeconds(),
+            detected.UsageResetDetection?.NextResetsAt);
+        Assert.IsNull(duplicate.UsageResetDetection);
+    }
+
+    [TestMethod]
     public async Task ExecuteAsync_LiveAboveThresholdDoesNotConsume()
     {
         var factory = new FakeClientFactory(CreateSnapshot(weeklyUsedPercent: 80));
@@ -109,6 +147,101 @@ public sealed class GuardCycleExecutorTests
             Environment.NewLine,
             Directory.EnumerateFiles(paths.LogDirectory).Select(File.ReadAllText));
         Assert.IsFalse(logText.Contains("private-credit-id", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public async Task ExecuteAsync_AttributesRefreshedResetToAutomaticCredit()
+    {
+        var previousResetAt = Now.AddDays(6);
+        var nextResetAt = Now.AddDays(7);
+        var factory = new FakeClientFactory(
+            CreateSnapshot(95, Now.AddMinutes(-1), previousResetAt))
+        {
+            PostConsumeSnapshot = CreateSnapshot(0, Now, nextResetAt),
+        };
+        var executor = CreateExecutor(factory);
+        var settings = GuardSettings.Default with
+        {
+            AutomationEnabled = true,
+        };
+
+        var result = await executor.ExecuteAsync(settings, CancellationToken.None);
+
+        Assert.AreEqual(CycleActionKind.ResetSucceeded, result.ActionKind);
+        Assert.AreEqual(
+            WeeklyUsageResetKind.AutomaticCredit,
+            result.UsageResetDetection?.Kind);
+        Assert.AreEqual(
+            nextResetAt.ToUnixTimeSeconds(),
+            result.UsageResetDetection?.NextResetsAt);
+    }
+
+    [TestMethod]
+    public async Task ExecuteAsync_AttributesRefreshObservedBeforeSuccessTimestamp()
+    {
+        var resetAt = Now.AddDays(6);
+        var factory = new FakeClientFactory(
+            CreateSnapshot(95, Now.AddMinutes(-1), resetAt))
+        {
+            PostConsumeSnapshot = CreateSnapshot(
+                0,
+                Now.AddMilliseconds(-1),
+                resetAt),
+        };
+        var executor = CreateExecutor(factory);
+        var settings = GuardSettings.Default with
+        {
+            AutomationEnabled = true,
+        };
+
+        var result = await executor.ExecuteAsync(settings, CancellationToken.None);
+
+        Assert.AreEqual(CycleActionKind.ResetSucceeded, result.ActionKind);
+        Assert.AreEqual(
+            WeeklyUsageResetKind.AutomaticCredit,
+            result.UsageResetDetection?.Kind);
+        Assert.AreEqual(
+            resetAt.ToUnixTimeSeconds(),
+            result.UsageResetDetection?.NextResetsAt);
+    }
+
+    [TestMethod]
+    public async Task ExecuteAsync_PendingAutomaticCreditSurvivesExecutorRestart()
+    {
+        var previousResetAt = Now.AddDays(6);
+        var nextResetAt = Now.AddDays(7);
+        var initialFactory = new FakeClientFactory(
+            CreateSnapshot(95, Now.AddMinutes(-1), previousResetAt))
+        {
+            FailPostConsumeRead = true,
+        };
+        var settings = GuardSettings.Default with
+        {
+            AutomationEnabled = true,
+        };
+        var initialExecutor = CreateExecutor(initialFactory);
+
+        var pendingRefresh = await initialExecutor.ExecuteAsync(
+            settings,
+            CancellationToken.None);
+
+        Assert.AreEqual(
+            "live_reset_refresh_pending",
+            pendingRefresh.ActionCode);
+        Assert.IsNull(pendingRefresh.UsageResetDetection);
+
+        var refreshedFactory = new FakeClientFactory(
+            CreateSnapshot(0, Now, nextResetAt));
+        var restartedExecutor = CreateExecutor(refreshedFactory);
+
+        var detected = await restartedExecutor.ExecuteAsync(
+            settings,
+            CancellationToken.None);
+
+        Assert.AreEqual(
+            WeeklyUsageResetKind.AutomaticCredit,
+            detected.UsageResetDetection?.Kind);
+        Assert.AreEqual(0, refreshedFactory.ConsumeCount);
     }
 
     [TestMethod]
@@ -297,14 +430,34 @@ public sealed class GuardCycleExecutorTests
         AppServerLiveResetFailureClassifier.Instance,
         new FixedTimeProvider(Now));
 
-    private static AccountRateLimits CreateSnapshot(double weeklyUsedPercent)
+    private GuardCycleExecutor CreateExecutor(
+        SequencedSnapshotClientFactory factory) => new(
+            paths,
+            factory,
+            new TestSecretProtector(),
+            AppServerLiveResetFailureClassifier.Instance,
+            new FixedTimeProvider(Now));
+
+    private static AccountRateLimits CreateSnapshot(double weeklyUsedPercent) =>
+        CreateSnapshot(
+            weeklyUsedPercent,
+            Now,
+            Now.AddDays(6));
+
+    private static AccountRateLimits CreateSnapshot(
+        double weeklyUsedPercent,
+        DateTimeOffset observedAt,
+        DateTimeOffset weeklyResetAt)
     {
-        var nowUnix = Now.ToUnixTimeSeconds();
+        var observedAtUnix = observedAt.ToUnixTimeSeconds();
         var snapshot = new RateLimitSnapshot(
             "codex",
             "Codex",
-            new RateLimitWindow(20, 300, nowUnix + 60 * 60),
-            new RateLimitWindow(weeklyUsedPercent, 10_080, nowUnix + 6 * 24 * 60 * 60));
+            new RateLimitWindow(20, 300, observedAtUnix + 60 * 60),
+            new RateLimitWindow(
+                weeklyUsedPercent,
+                10_080,
+                weeklyResetAt.ToUnixTimeSeconds()));
         return new AccountRateLimits(
             snapshot,
             new Dictionary<string, RateLimitSnapshot>(StringComparer.OrdinalIgnoreCase)
@@ -318,12 +471,12 @@ public sealed class GuardCycleExecutorTests
                         "private-credit-id",
                         "codexRateLimits",
                         "available",
-                        nowUnix - 60,
-                        nowUnix + 24 * 60 * 60,
+                        observedAtUnix - 60,
+                        observedAtUnix + 24 * 60 * 60,
                         null,
                         null),
                 ]),
-            Now);
+            observedAt);
     }
 
     private sealed class FakeClientFactory : IRateLimitClientFactory
@@ -343,6 +496,8 @@ public sealed class GuardCycleExecutorTests
             ConsumeResetCreditOutcome.Reset;
 
         public bool FailPostConsumeRead { get; init; }
+
+        public AccountRateLimits? PostConsumeSnapshot { get; init; }
 
         public int UnknownInitialReadFailures { get; set; }
 
@@ -382,7 +537,10 @@ public sealed class GuardCycleExecutorTests
                     throw new AppServerException(AppServerFailureCategory.Timeout);
                 }
 
-                return Task.FromResult(snapshot);
+                return Task.FromResult(
+                    hasConsumed
+                        ? owner.PostConsumeSnapshot ?? snapshot
+                        : snapshot);
             }
 
             public Task<ConsumeResetCreditResult> ConsumeResetCreditAsync(
@@ -402,6 +560,51 @@ public sealed class GuardCycleExecutorTests
                 return Task.FromResult(new ConsumeResetCreditResult(
                     owner.Outcome));
             }
+
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class SequencedSnapshotClientFactory : IRateLimitClientFactory
+    {
+        private readonly Queue<AccountRateLimits> snapshots;
+
+        public SequencedSnapshotClientFactory(
+            IEnumerable<AccountRateLimits> snapshots)
+        {
+            this.snapshots = new Queue<AccountRateLimits>(snapshots);
+        }
+
+        public IAccountRateLimitClient Create(GuardSettings settings)
+        {
+            if (!snapshots.TryDequeue(out var snapshot))
+            {
+                throw new InvalidOperationException("snapshot_sequence_exhausted");
+            }
+
+            return new ReadOnlyClient(snapshot);
+        }
+
+        private sealed class ReadOnlyClient : IAccountRateLimitClient
+        {
+            private readonly AccountRateLimits snapshot;
+
+            public ReadOnlyClient(AccountRateLimits snapshot)
+            {
+                this.snapshot = snapshot;
+            }
+
+            public Task<AccountRateLimits> ReadAsync(
+                CancellationToken cancellationToken)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return Task.FromResult(snapshot);
+            }
+
+            public Task<ConsumeResetCreditResult> ConsumeResetCreditAsync(
+                ConsumeResetCreditRequest request,
+                CancellationToken cancellationToken) =>
+                throw new InvalidOperationException("consume_not_expected");
 
             public ValueTask DisposeAsync() => ValueTask.CompletedTask;
         }

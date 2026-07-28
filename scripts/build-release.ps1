@@ -2,7 +2,7 @@
 param(
     [Parameter()]
     [ValidatePattern('^\d+\.\d+\.\d+$')]
-    [string]$Version = '0.2.2',
+    [string]$Version = '0.2.7',
 
     [Parameter()]
     [string]$InnoCompilerPath
@@ -22,6 +22,9 @@ $installerDirectory = [System.IO.Path]::GetFullPath(
 $releaseDirectory = [System.IO.Path]::GetFullPath(
     (Join-Path $artifactsRoot 'release'))
 $artifactPrefix = $artifactsRoot.TrimEnd('\') + '\'
+$installerScript = Join-Path $repositoryRoot 'installer\CodexAutoReset.iss'
+$desktopAppSource = Join-Path $repositoryRoot `
+    'src\CodexAutoReset.Desktop\App.xaml.cs'
 
 function Reset-ArtifactDirectory {
     param([Parameter(Mandatory)][string]$Path)
@@ -51,6 +54,25 @@ function Invoke-DotNet {
 
 if (-not (Test-Path -LiteralPath (Join-Path $repositoryRoot 'CodexAutoReset.sln'))) {
     throw 'The release script must run from the CodexAutoReset repository.'
+}
+
+$installerSource = Get-Content -LiteralPath $installerScript -Raw
+$desktopSource = Get-Content -LiteralPath $desktopAppSource -Raw
+$installerMutex = [regex]::Match(
+    $installerSource,
+    '(?m)^AppMutex=(?<name>[^\r\n]+)$')
+$desktopMutex = [regex]::Match(
+    $desktopSource,
+    'UninstallGuardMutexName\s*=\s*@"(?<name>[^"]+)"')
+if (-not $installerMutex.Success -or -not $desktopMutex.Success) {
+    throw 'The installer and desktop app must both declare the uninstall guard mutex.'
+}
+
+if (-not [string]::Equals(
+        $installerMutex.Groups['name'].Value,
+        $desktopMutex.Groups['name'].Value,
+        [System.StringComparison]::Ordinal)) {
+    throw 'The installer and desktop app uninstall guard mutex names must match exactly.'
 }
 
 Reset-ArtifactDirectory -Path $publishDirectory
@@ -96,13 +118,17 @@ finally {
 
 $forbiddenFiles = Get-ChildItem -LiteralPath $publishDirectory -Recurse -File |
     Where-Object {
-        $_.Extension -in @('.pdb', '.log') -or
+        $_.Extension -in @('.pdb', '.log', '.jsonl', '.tmp', '.dmp') -or
+        $_.Name -like '*.invalid*' -or
         $_.Name -in @(
             'settings.json',
             'state.json',
             'live-state.json',
             'live-safety-block.json',
             'live-safety-block.json.tmp',
+            'usage-reset-state.json',
+            'compatibility-notification-state.json',
+            'compatibility-notification-state.json.tmp',
             'instance.lock')
     }
 if ($forbiddenFiles) {
@@ -112,6 +138,21 @@ if ($forbiddenFiles) {
 $mainExecutable = Join-Path $publishDirectory 'CodexAutoReset.exe'
 if (-not (Test-Path -LiteralPath $mainExecutable -PathType Leaf)) {
     throw "The published application executable was not found: $mainExecutable"
+}
+
+$runtimeConfigPath = Join-Path $publishDirectory 'CodexAutoReset.runtimeconfig.json'
+if (-not (Test-Path -LiteralPath $runtimeConfigPath -PathType Leaf)) {
+    throw "The published runtime configuration was not found: $runtimeConfigPath"
+}
+
+$runtimeConfig = Get-Content -LiteralPath $runtimeConfigPath -Raw |
+    ConvertFrom-Json
+$binaryFormatterSetting = $runtimeConfig.runtimeOptions.configProperties.
+    PSObject.Properties[
+        'System.Runtime.Serialization.EnableUnsafeBinaryFormatterSerialization']
+if ($null -eq $binaryFormatterSetting -or
+    $binaryFormatterSetting.Value -ne $false) {
+    throw 'The published application must explicitly disable unsafe BinaryFormatter serialization.'
 }
 
 $legacyBrandedFiles = Get-ChildItem -LiteralPath $publishDirectory -Recurse -File |
@@ -146,7 +187,6 @@ if (-not (Test-Path -LiteralPath $InnoCompilerPath -PathType Leaf)) {
     throw "Inno Setup compiler was not found: $InnoCompilerPath"
 }
 
-$installerScript = Join-Path $repositoryRoot 'installer\CodexAutoReset.iss'
 & $InnoCompilerPath `
     "/DAppVersion=$Version" `
     "/DPublishDir=$publishDirectory" `

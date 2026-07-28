@@ -7,7 +7,11 @@ namespace CodexAutoReset.Desktop;
 
 public partial class App : System.Windows.Application
 {
+    private const string UninstallGuardMutexName =
+        @"Local\CodexAutoReset-8D5D7C2C-6DE7-4B57-A788-4D8E4680B43B";
+
     private SingleInstanceLease? instanceLease;
+    private System.Threading.Mutex? uninstallGuardMutex;
     private GuardMonitorService? monitor;
     private MainWindowViewModel? viewModel;
     private TrayIconHost? tray;
@@ -58,6 +62,10 @@ public partial class App : System.Windows.Application
                 return;
             }
 
+            uninstallGuardMutex = new System.Threading.Mutex(
+                initiallyOwned: false,
+                UninstallGuardMutexName);
+
             var startupService = new StartupService(
                 new WindowsCurrentUserRegistryStore());
             if (arguments.StartupOwner is not null
@@ -90,7 +98,11 @@ public partial class App : System.Windows.Application
             var window = new MainWindow(viewModel);
             MainWindow = window;
 
-            tray = new TrayIconHost(viewModel, window, ShutdownSafelyAsync);
+            tray = new TrayIconHost(
+                viewModel,
+                window,
+                ShutdownSafelyAsync,
+                paths.CompatibilityNotificationStateFile);
             await monitor.StartAsync();
 
             if (!arguments.Background)

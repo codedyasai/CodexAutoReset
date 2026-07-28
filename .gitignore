@@ -15,5 +15,10 @@ state.json
 live-state.json
 live-safety-block.json
 live-safety-block.json.tmp
+usage-reset-state.json
+.usage-reset-state.json.*.tmp
+.usage-reset-state.json.*.invalid
+compatibility-notification-state.json
+compatibility-notification-state.json.tmp
 instance.lock
 Logs/

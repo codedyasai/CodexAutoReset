@@ -1,5 +1,6 @@
 using System.Drawing;
 using System.IO;
+using System.Text.Json;
 using CodexAutoReset.Runtime;
 using Forms = System.Windows.Forms;
 
@@ -13,24 +14,29 @@ public sealed class TrayIconHost : IDisposable
     private readonly Icon trayIcon;
     private readonly Forms.NotifyIcon notifyIcon;
     private readonly Forms.ToolStripMenuItem statusItem;
-    private readonly Forms.ToolStripMenuItem automationItem;
     private readonly Forms.ToolStripMenuItem weeklyItem;
     private readonly Forms.ToolStripMenuItem creditsItem;
     private readonly Forms.ToolStripMenuItem startupItem;
+    private readonly UsageResetNotificationGate usageResetNotificationGate = new();
+    private readonly CompatibilityNotificationGate compatibilityNotificationGate;
     private string? lastNotificationCode;
     private bool disposed;
 
     public TrayIconHost(
         MainWindowViewModel viewModel,
         MainWindow window,
-        Func<int, Task> exitAsync)
+        Func<int, Task> exitAsync,
+        string? compatibilityNotificationStatePath = null)
     {
         this.viewModel = viewModel;
         this.window = window;
         this.exitAsync = exitAsync;
+        compatibilityNotificationGate = compatibilityNotificationStatePath is null
+            ? new CompatibilityNotificationGate()
+            : new CompatibilityNotificationGate(
+                compatibilityNotificationStatePath);
 
         statusItem = new Forms.ToolStripMenuItem("상태: 확인 전") { Enabled = false };
-        automationItem = new Forms.ToolStripMenuItem("자동 초기화: 꺼짐") { Enabled = false };
         weeklyItem = new Forms.ToolStripMenuItem("주간: 확인 전") { Enabled = false };
         creditsItem = new Forms.ToolStripMenuItem("초기화권: 확인 전") { Enabled = false };
         startupItem = new Forms.ToolStripMenuItem("Windows 자동 시작");
@@ -47,7 +53,6 @@ public sealed class TrayIconHost : IDisposable
         menu.Items.AddRange(
         [
             statusItem,
-            automationItem,
             weeklyItem,
             creditsItem,
             new Forms.ToolStripSeparator(),
@@ -67,6 +72,7 @@ public sealed class TrayIconHost : IDisposable
             Visible = true,
         };
         notifyIcon.DoubleClick += (_, _) => Dispatch(window.ShowAndActivate);
+        notifyIcon.BalloonTipClicked += OnBalloonTipClicked;
 
         viewModel.PropertyChanged += OnViewModelPropertyChanged;
         UpdateMenu(viewModel.CurrentSnapshot);
@@ -81,6 +87,7 @@ public sealed class TrayIconHost : IDisposable
 
         disposed = true;
         viewModel.PropertyChanged -= OnViewModelPropertyChanged;
+        notifyIcon.BalloonTipClicked -= OnBalloonTipClicked;
         notifyIcon.Visible = false;
         notifyIcon.Dispose();
         trayIcon.Dispose();
@@ -99,20 +106,25 @@ public sealed class TrayIconHost : IDisposable
 
     private void UpdateMenu(MonitorSnapshot snapshot)
     {
-        statusItem.Text = snapshot.ActionKind == CycleActionKind.ResetPending
-            ? snapshot.IsFailure
-                ? "상태: 초기화 결과 대기 · 조회 실패 (자동 재시도)"
-                : "상태: 초기화 결과 확인 대기 (자동 재시도)"
-            : snapshot.IsFailure
-                ? "상태: 안전 차단"
-                : snapshot.ActionKind == CycleActionKind.ResetSucceeded
-                    ? "상태: 초기화권 처리 완료"
-                    : snapshot.ActionKind == CycleActionKind.ResetNoEffect
-                        ? "상태: 처리 완료 · 초기화 항목 없음"
-                        : $"상태: {FormatStatus(snapshot.StatusCode)}";
-        automationItem.Text = snapshot.Settings.AutomationEnabled
-            ? "자동 초기화: 켜짐"
-            : "자동 초기화: 꺼짐";
+        statusItem.Text = snapshot.CompatibilityState switch
+        {
+            CodexCompatibilityState.VerificationPending =>
+                "상태: Codex 응답 재확인 중",
+            CodexCompatibilityState.ReadUnsupported
+                or CodexCompatibilityState.MutationUnverified =>
+                "상태: Codex 호환성 오류",
+            _ => snapshot.ActionKind == CycleActionKind.ResetPending
+                ? snapshot.IsFailure
+                    ? "상태: 초기화 결과 대기 · 조회 실패 (자동 재시도)"
+                    : "상태: 초기화 결과 확인 대기 (자동 재시도)"
+                : snapshot.IsFailure
+                    ? "상태: 안전 차단"
+                    : snapshot.ActionKind == CycleActionKind.ResetSucceeded
+                        ? "상태: 초기화권 처리 완료"
+                        : snapshot.ActionKind == CycleActionKind.ResetNoEffect
+                            ? "상태: 처리 완료 · 초기화 항목 없음"
+                            : $"상태: {FormatStatus(snapshot.StatusCode)}",
+        };
         weeklyItem.Text = $"주간: {FormatRemaining(snapshot.Weekly)}";
         creditsItem.Text = $"초기화권: {snapshot.AvailableCreditCount?.ToString() ?? "알 수 없음"}";
         startupItem.Checked = viewModel.IsStartupActuallyEnabled;
@@ -131,10 +143,19 @@ public sealed class TrayIconHost : IDisposable
 
     private void MaybeNotify(MonitorSnapshot snapshot)
     {
+        if (MaybeNotifyCompatibility(snapshot))
+        {
+            return;
+        }
+
+        if (MaybeNotifyUsageReset(snapshot))
+        {
+            return;
+        }
+
         var shouldNotify = snapshot.IsFailure
             || snapshot.ActionKind == CycleActionKind.ResetPending
-            || snapshot.ActionKind is CycleActionKind.ResetSucceeded
-                or CycleActionKind.ResetNoEffect;
+            || snapshot.ActionKind == CycleActionKind.ResetNoEffect;
         if (!shouldNotify
             || string.Equals(lastNotificationCode, snapshot.StatusCode, StringComparison.Ordinal))
         {
@@ -157,10 +178,61 @@ public sealed class TrayIconHost : IDisposable
                 : Forms.ToolTipIcon.Info);
     }
 
+    private bool MaybeNotifyCompatibility(MonitorSnapshot snapshot)
+    {
+        var state = snapshot.CompatibilityState;
+        var isCompatibilityConcern = state is
+            CodexCompatibilityState.VerificationPending
+            or CodexCompatibilityState.ReadUnsupported
+            or CodexCompatibilityState.MutationUnverified;
+        if (!isCompatibilityConcern)
+        {
+            compatibilityNotificationGate.Consume(state);
+            return false;
+        }
+
+        if (compatibilityNotificationGate.Consume(state))
+        {
+            notifyIcon.ShowBalloonTip(
+                5000,
+                "Codex 호환성 확인 필요",
+                "현재 Codex 응답을 안전하게 지원하지 않아 일부 기능을 중단했습니다. 앱을 열어 자세한 내용을 확인하세요.",
+                Forms.ToolTipIcon.Warning);
+        }
+
+        // Pending verification and confirmed compatibility failures own the
+        // notification channel so the generic failure balloon cannot create an
+        // early or duplicate warning for the same incident.
+        return true;
+    }
+
+    private bool MaybeNotifyUsageReset(MonitorSnapshot snapshot)
+    {
+        if (snapshot.UsageResetDetection is not { } detection)
+        {
+            return false;
+        }
+
+        var notification = usageResetNotificationGate.Consume(
+            detection,
+            snapshot.Settings.NotifyOnUsageReset);
+        if (notification is null)
+        {
+            return false;
+        }
+
+        notifyIcon.ShowBalloonTip(
+            4000,
+            notification.Title,
+            notification.Body,
+            Forms.ToolTipIcon.Info);
+        return true;
+    }
+
     private static string FormatStatus(string statusCode) => statusCode switch
     {
         "waiting" => "확인 전",
-        "automation_disabled" => "사용량 확인 중 · 자동 초기화 꺼짐",
+        "automation_disabled" => "사용량 확인 완료",
         "no_action" => "정상 · 초기화 조건 미충족",
         "duplicate_suppressed" => "정상 · 이번 주간 구간은 이미 처리됨",
         _ => "상태 확인됨",
@@ -193,16 +265,32 @@ public sealed class TrayIconHost : IDisposable
         });
     }
 
+    private void OnBalloonTipClicked(object? sender, EventArgs eventArgs) =>
+        Dispatch(window.ShowAndActivate);
+
     private static string FormatRemaining(Core.WindowReading? reading) =>
-        reading is null ? "알 수 없음" : $"잔여 {reading.RemainingPercent:F1}%";
+        reading is null ? "알 수 없음" : $"잔여 {reading.RemainingPercent:F0}%";
 
     private static string BuildTooltip(MonitorSnapshot snapshot)
     {
+        if (snapshot.CompatibilityState is
+            CodexCompatibilityState.ReadUnsupported
+            or CodexCompatibilityState.MutationUnverified)
+        {
+            return "CodexAutoReset · Codex 호환성 오류";
+        }
+
+        if (snapshot.CompatibilityState ==
+            CodexCompatibilityState.VerificationPending)
+        {
+            return "CodexAutoReset · Codex 응답 재확인 중";
+        }
+
         var remaining = snapshot.Weekly is null
             ? "?"
             : $"{snapshot.Weekly.RemainingPercent:F0}%";
-        var state = snapshot.Settings.AutomationEnabled ? "자동 켜짐" : "자동 꺼짐";
-        var text = $"CodexAutoReset · 주간 {remaining} · 권 {snapshot.AvailableCreditCount?.ToString() ?? "?"} · {state}";
+        var text =
+            $"CodexAutoReset · 주간 {remaining} · 권 {snapshot.AvailableCreditCount?.ToString() ?? "?"}";
         return text.Length <= 63 ? text : text[..63];
     }
 
@@ -229,5 +317,225 @@ public sealed class TrayIconHost : IDisposable
         }
 
         await dispatcher.InvokeAsync(action).Task.Unwrap();
+    }
+}
+
+public sealed class CompatibilityNotificationGate
+{
+    private static readonly TimeSpan ReminderInterval = TimeSpan.FromHours(24);
+    private const int MaximumStateBytes = 1_024;
+    private readonly Func<DateTimeOffset> utcNowProvider;
+    private readonly string? durablePath;
+    private bool incompatibleIncidentActive;
+    private DateTimeOffset? lastNotificationAt;
+
+    public CompatibilityNotificationGate(
+        Func<DateTimeOffset>? utcNowProvider = null)
+    {
+        this.utcNowProvider = utcNowProvider ?? (() => DateTimeOffset.UtcNow);
+    }
+
+    public CompatibilityNotificationGate(
+        string durablePath,
+        Func<DateTimeOffset>? utcNowProvider = null)
+    {
+        this.durablePath = Path.GetFullPath(
+            string.IsNullOrWhiteSpace(durablePath)
+                ? throw new ArgumentException(
+                    "compatibility_notification_path_invalid",
+                    nameof(durablePath))
+                : durablePath);
+        this.utcNowProvider = utcNowProvider ?? (() => DateTimeOffset.UtcNow);
+        LoadDurableState();
+    }
+
+    public bool Consume(CodexCompatibilityState state)
+    {
+        if (state == CodexCompatibilityState.Compatible)
+        {
+            var hadActiveIncident = incompatibleIncidentActive;
+            incompatibleIncidentActive = false;
+            lastNotificationAt = null;
+            if (hadActiveIncident)
+            {
+                TryDeleteDurableState();
+            }
+
+            return false;
+        }
+
+        if (state is not (
+            CodexCompatibilityState.ReadUnsupported
+            or CodexCompatibilityState.MutationUnverified))
+        {
+            return false;
+        }
+
+        var now = utcNowProvider();
+        if (incompatibleIncidentActive
+            && lastNotificationAt is { } notifiedAt
+            && now - notifiedAt < ReminderInterval)
+        {
+            return false;
+        }
+
+        incompatibleIncidentActive = true;
+        lastNotificationAt = now;
+        TryPersistDurableState(now);
+        return true;
+    }
+
+    private void LoadDurableState()
+    {
+        if (durablePath is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var info = new FileInfo(durablePath);
+            if (!info.Exists
+                || info.Length is <= 0 or > MaximumStateBytes
+                || info.Attributes.HasFlag(FileAttributes.Directory)
+                || info.Attributes.HasFlag(FileAttributes.ReparsePoint))
+            {
+                return;
+            }
+
+            using var stream = new FileStream(
+                durablePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize: 1024,
+                FileOptions.SequentialScan);
+            using var document = JsonDocument.Parse(stream, new JsonDocumentOptions
+            {
+                AllowTrailingCommas = false,
+                CommentHandling = JsonCommentHandling.Disallow,
+                MaxDepth = 3,
+            });
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object
+                || root.GetRawText().Length > MaximumStateBytes)
+            {
+                return;
+            }
+
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var property in root.EnumerateObject())
+            {
+                if (!names.Add(property.Name))
+                {
+                    return;
+                }
+            }
+
+            if (names.Count != 2
+                || !root.TryGetProperty("schemaVersion", out var schemaVersion)
+                || !schemaVersion.TryGetInt32(out var version)
+                || version != 1
+                || !root.TryGetProperty(
+                    "lastNotificationAt",
+                    out var notificationAt)
+                || !notificationAt.TryGetInt64(out var unixSeconds))
+            {
+                return;
+            }
+
+            var loadedAt = DateTimeOffset.FromUnixTimeSeconds(unixSeconds);
+            var now = utcNowProvider();
+            if (loadedAt > now.AddMinutes(5))
+            {
+                return;
+            }
+
+            incompatibleIncidentActive = true;
+            lastNotificationAt = loadedAt;
+        }
+        catch (Exception exception) when (exception is
+            IOException
+                or UnauthorizedAccessException
+                or System.Security.SecurityException
+                or ArgumentException
+                or JsonException
+                or InvalidOperationException
+                or ArgumentOutOfRangeException)
+        {
+        }
+    }
+
+    private void TryPersistDurableState(DateTimeOffset notificationAt)
+    {
+        if (durablePath is null)
+        {
+            return;
+        }
+
+        var temporaryPath = durablePath + ".tmp";
+        try
+        {
+            var directory = Path.GetDirectoryName(durablePath)
+                ?? throw new IOException(
+                    "compatibility_notification_path_invalid");
+            Directory.CreateDirectory(directory);
+            using (var stream = new FileStream(
+                temporaryPath,
+                FileMode.Create,
+                FileAccess.Write,
+                FileShare.None,
+                bufferSize: 1024,
+                FileOptions.WriteThrough))
+            {
+                using var writer = new Utf8JsonWriter(stream);
+                writer.WriteStartObject();
+                writer.WriteNumber("schemaVersion", 1);
+                writer.WriteNumber(
+                    "lastNotificationAt",
+                    notificationAt.ToUnixTimeSeconds());
+                writer.WriteEndObject();
+                writer.Flush();
+                stream.Flush(flushToDisk: true);
+            }
+
+            File.Move(temporaryPath, durablePath, overwrite: true);
+        }
+        catch (Exception exception) when (exception is
+            IOException
+                or UnauthorizedAccessException
+                or System.Security.SecurityException
+                or ArgumentException
+                or NotSupportedException)
+        {
+            TryDeletePath(temporaryPath);
+        }
+    }
+
+    private void TryDeleteDurableState()
+    {
+        if (durablePath is null)
+        {
+            return;
+        }
+
+        TryDeletePath(durablePath);
+        TryDeletePath(durablePath + ".tmp");
+    }
+
+    private static void TryDeletePath(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (Exception exception) when (exception is
+            IOException
+                or UnauthorizedAccessException
+                or System.Security.SecurityException
+                or ArgumentException
+                or NotSupportedException)
+        {
+        }
     }
 }

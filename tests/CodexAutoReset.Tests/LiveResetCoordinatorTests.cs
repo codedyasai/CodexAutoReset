@@ -79,6 +79,37 @@ public sealed class LiveResetCoordinatorTests
     }
 
     [TestMethod]
+    public async Task UnverifiedConsumeSchemaBlocksBeforeMutationWithoutDurableMarker()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var client = SuccessfulClient();
+        var coordinator = CreateCoordinator(directory, client);
+        var snapshot = CreateLimits(Now) with
+        {
+            ConsumeSchemaCompatible = false,
+        };
+
+        var result = await coordinator.ExecuteAsync(
+            LiveSettings(),
+            snapshot,
+            Now,
+            CancellationToken.None);
+
+        Assert.AreEqual(LiveResetCycleKind.Blocked, result.Kind);
+        Assert.AreEqual(
+            LiveAttemptBlockReason.ProtocolMismatch,
+            result.ProcessBlockReason);
+        Assert.IsFalse(result.ConsumeAttempted);
+        Assert.AreEqual(0, client.ConsumeRequests.Count);
+        Assert.AreEqual(
+            0,
+            (await coordinator.ReadAttemptsAsync(CancellationToken.None)).Count);
+        Assert.IsFalse(File.Exists(Path.Combine(
+            directory.Path,
+            "live-safety-block.json")));
+    }
+
+    [TestMethod]
     public async Task TerminalAttemptSuppressesSameIntervalAcrossCoordinatorInstances()
     {
         using var directory = TemporaryDirectory.Create();

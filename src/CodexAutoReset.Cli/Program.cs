@@ -10,6 +10,10 @@ namespace CodexAutoReset.Cli;
 internal static class Program
 {
     private const string InstanceLockFileName = "instance.lock";
+    internal static string CompatibilityRevision { get; } = string.Concat(
+        typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "0.0.0",
+        "|",
+        AppServerProtocolParser.AuditedConsumeSchemaVersion);
 
     public static async Task<int> Main(string[] args)
     {
@@ -113,8 +117,7 @@ internal static class Program
         var engine = new ResetDecisionEngine();
         var secretProtector = new DpapiSecretProtector();
         var failureClassifier = AppServerLiveResetFailureClassifier.Instance;
-        var liveSafetyLatch = new LiveResetSafetyLatch(
-            Path.Combine(appDataRoot, "live-safety-block.json"));
+        var liveSafetyLatch = CreateLiveSafetyLatch(appDataRoot);
 
         IAccountRateLimitClient? usageSource = null;
         LiveResetCoordinator? liveCoordinator = null;
@@ -555,7 +558,12 @@ internal static class Program
         }
     }
 
-    private static async Task PreserveOrBlockPendingAsync(
+    internal static LiveResetSafetyLatch CreateLiveSafetyLatch(
+        string appDataRoot) => new(
+            Path.Combine(appDataRoot, "live-safety-block.json"),
+            CompatibilityRevision);
+
+    internal static async Task PreserveOrBlockPendingAsync(
         LiveResetCoordinator coordinator,
         LiveResetFailureDisposition disposition)
     {
@@ -566,6 +574,25 @@ internal static class Program
 
         try
         {
+            var shouldBlock = true;
+            try
+            {
+                var attempts = await coordinator.ReadAttemptsAsync(
+                    CancellationToken.None).ConfigureAwait(false);
+                shouldBlock = attempts.Any(
+                    attempt => attempt.Phase != LiveAttemptPhase.Terminal);
+            }
+            catch (Exception readException) when (!IsFatal(readException))
+            {
+                // A state read failure cannot prove that no mutation is pending.
+                // Fall through to the existing fail-closed block operation.
+            }
+
+            if (!shouldBlock)
+            {
+                return;
+            }
+
             await coordinator.BlockPendingAsync(
                 disposition == LiveResetFailureDisposition.ProtocolMismatch
                     ? LiveAttemptBlockReason.ProtocolMismatch
@@ -583,15 +610,11 @@ internal static class Program
         }
     }
 
-    private static void LatchFailure(
+    internal static void LatchFailure(
         LiveResetSafetyLatch latch,
         LiveResetFailureDisposition disposition)
     {
-        if (disposition == LiveResetFailureDisposition.ProtocolMismatch)
-        {
-            latch.BlockProtocolMismatch();
-        }
-        else if (disposition == LiveResetFailureDisposition.Unknown)
+        if (disposition == LiveResetFailureDisposition.Unknown)
         {
             latch.BlockUnknownFailure();
         }
@@ -690,7 +713,7 @@ internal static class Program
         var resetTime = DateTimeOffset.FromUnixTimeSeconds(reading.ResetsAt)
             .ToLocalTime();
         Console.WriteLine(
-            $"{label}: {localizer.Remaining} {reading.RemainingPercent:F1}% | "
+            $"{label}: {localizer.Remaining} {reading.RemainingPercent:F0}% | "
             + $"{localizer.ResetsAt} {resetTime:g}");
     }
 
@@ -736,7 +759,7 @@ internal static class Program
         window?.WindowDurationMins?.ToString() ?? "null";
 
     private static string FormatUsed(RateLimitWindow? window) =>
-        window is null ? "null" : $"{window.UsedPercent:F1}%";
+        window is null ? "null" : $"{window.UsedPercent:F0}%";
 
     private static async Task TryLogFailureAsync(
         SafeJsonlLogger logger,

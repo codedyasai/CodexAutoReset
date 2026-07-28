@@ -18,6 +18,12 @@ public sealed class AppServerLiveResetFailureClassifier : ILiveResetFailureClass
             return LiveResetFailureDisposition.Unknown;
         }
 
+        if (appServerException.Category == AppServerFailureCategory.RemoteError
+            && appServerException.RemoteCode is -32601 or -32602)
+        {
+            return LiveResetFailureDisposition.ProtocolMismatch;
+        }
+
         return appServerException.Category switch
         {
             AppServerFailureCategory.InvalidResponse =>

@@ -109,7 +109,7 @@ public sealed class JsonSettingsStore
             directory,
             $".{System.IO.Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
 
-        var document = SettingsDocumentV3.FromSettings(settings);
+        var document = SettingsDocumentV4.FromSettings(settings);
 
         try
         {
@@ -204,6 +204,7 @@ public sealed class JsonSettingsStore
             1 => ValidateAndMap(DeserializeRequired<SettingsDocumentV1>(root)),
             2 => ValidateAndMap(DeserializeRequired<SettingsDocumentV2>(root)),
             3 => ValidateAndMap(DeserializeRequired<SettingsDocumentV3>(root)),
+            4 => ValidateAndMap(DeserializeRequired<SettingsDocumentV4>(root)),
             _ => throw new SettingsException("settings_schema_unsupported"),
         };
     }
@@ -224,7 +225,8 @@ public sealed class JsonSettingsStore
             document.UiLanguage,
             document.StartWithWindows,
             document.CodexExecutablePath,
-            automationEnabled: false);
+            automationEnabled: false,
+            notifyOnUsageReset: true);
     }
 
     private static GuardSettings ValidateAndMap(SettingsDocumentV2 document)
@@ -244,7 +246,8 @@ public sealed class JsonSettingsStore
             document.StartWithWindows,
             document.CodexExecutablePath,
             automationEnabled: isLive
-                && string.Equals(document.TriggerLimit, "weekly", StringComparison.Ordinal));
+                && string.Equals(document.TriggerLimit, "weekly", StringComparison.Ordinal),
+            notifyOnUsageReset: true);
     }
 
     private static GuardSettings ValidateAndMap(SettingsDocumentV3 document) =>
@@ -254,7 +257,18 @@ public sealed class JsonSettingsStore
             document.UiLanguage,
             document.StartWithWindows,
             document.CodexExecutablePath,
-            document.AutomationEnabled);
+            document.AutomationEnabled,
+            notifyOnUsageReset: true);
+
+    private static GuardSettings ValidateAndMap(SettingsDocumentV4 document) =>
+        ValidateAndMap(
+            document.RemainingThresholdPercent,
+            document.PollIntervalMinutes,
+            document.UiLanguage,
+            document.StartWithWindows,
+            document.CodexExecutablePath,
+            document.AutomationEnabled,
+            document.NotifyOnUsageReset);
 
     private static GuardSettings ValidateAndMap(
         int remainingThresholdPercent,
@@ -262,7 +276,8 @@ public sealed class JsonSettingsStore
         string uiLanguageValue,
         bool startWithWindows,
         string? codexExecutablePath,
-        bool automationEnabled)
+        bool automationEnabled,
+        bool notifyOnUsageReset)
     {
         var uiLanguage = uiLanguageValue switch
         {
@@ -278,7 +293,8 @@ public sealed class JsonSettingsStore
             uiLanguage,
             startWithWindows,
             codexExecutablePath,
-            automationEnabled);
+            automationEnabled,
+            notifyOnUsageReset);
 
         Validate(settings);
         return settings;
@@ -447,9 +463,37 @@ public sealed class JsonSettingsStore
         [JsonRequired]
         public bool AutomationEnabled { get; init; }
 
-        public static SettingsDocumentV3 FromSettings(GuardSettings settings) => new()
+    }
+
+    private sealed record SettingsDocumentV4
+    {
+        [JsonRequired]
+        public int SchemaVersion { get; init; } = 4;
+
+        [JsonRequired]
+        public int RemainingThresholdPercent { get; init; } = 7;
+
+        [JsonRequired]
+        public int PollIntervalMinutes { get; init; } = 5;
+
+        [JsonRequired]
+        public string UiLanguage { get; init; } = "auto";
+
+        [JsonRequired]
+        public bool StartWithWindows { get; init; }
+
+        [JsonRequired]
+        public string? CodexExecutablePath { get; init; }
+
+        [JsonRequired]
+        public bool AutomationEnabled { get; init; }
+
+        [JsonRequired]
+        public bool NotifyOnUsageReset { get; init; } = true;
+
+        public static SettingsDocumentV4 FromSettings(GuardSettings settings) => new()
         {
-            SchemaVersion = 3,
+            SchemaVersion = 4,
             RemainingThresholdPercent = settings.RemainingThresholdPercent,
             PollIntervalMinutes = settings.PollIntervalMinutes,
             UiLanguage = settings.UiLanguage switch
@@ -461,6 +505,7 @@ public sealed class JsonSettingsStore
             StartWithWindows = settings.StartWithWindows,
             CodexExecutablePath = settings.CodexExecutablePath,
             AutomationEnabled = settings.AutomationEnabled,
+            NotifyOnUsageReset = settings.NotifyOnUsageReset,
         };
     }
 }

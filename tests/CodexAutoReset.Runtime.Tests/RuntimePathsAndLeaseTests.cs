@@ -17,6 +17,12 @@ public sealed class RuntimePathsAndLeaseTests
         Assert.AreEqual(
             Path.Combine(root, "live-safety-block.json"),
             paths.LiveSafetyBlockFile);
+        Assert.AreEqual(
+            Path.Combine(root, "usage-reset-state.json"),
+            paths.UsageResetStateFile);
+        Assert.AreEqual(
+            Path.Combine(root, "compatibility-notification-state.json"),
+            paths.CompatibilityNotificationStateFile);
         Assert.AreEqual(Path.Combine(root, "instance.lock"), paths.InstanceLockFile);
         Assert.AreEqual(Path.Combine(root, "Logs"), paths.LogDirectory);
     }

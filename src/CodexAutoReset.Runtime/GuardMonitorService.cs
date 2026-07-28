@@ -12,12 +12,22 @@ public enum CycleActionKind
     ResetNoEffect,
 }
 
+public enum CodexCompatibilityState
+{
+    Unknown,
+    Compatible,
+    VerificationPending,
+    ReadUnsupported,
+    MutationUnverified,
+}
+
 public sealed record GuardCycleResult(
     AccountRateLimits AccountRateLimits,
     EvaluationResult Evaluation,
     CycleActionKind ActionKind,
     string ActionCode,
-    bool? DuplicateSuppressed = null);
+    bool? DuplicateSuppressed = null,
+    WeeklyUsageResetDetection? UsageResetDetection = null);
 
 public sealed record MonitorSnapshot(
     DateTimeOffset ObservedAt,
@@ -29,7 +39,10 @@ public sealed record MonitorSnapshot(
     CycleActionKind ActionKind,
     string StatusCode,
     bool? DuplicateSuppressed,
-    bool IsFailure)
+    bool IsFailure,
+    WeeklyUsageResetDetection? UsageResetDetection = null,
+    CodexCompatibilityState CompatibilityState = CodexCompatibilityState.Unknown,
+    DateTimeOffset? LastSuccessfulObservationAt = null)
 {
     public static MonitorSnapshot Waiting(GuardSettings settings) => new(
         DateTimeOffset.UtcNow,
@@ -55,7 +68,10 @@ public sealed record MonitorSnapshot(
         result.ActionKind,
         result.ActionCode,
         result.DuplicateSuppressed,
-        IsFailure: false);
+        IsFailure: false,
+        result.UsageResetDetection,
+        CodexCompatibilityState.Compatible,
+        result.AccountRateLimits.ObservedAt);
 
     public static MonitorSnapshot Failure(
         GuardSettings settings,
@@ -81,28 +97,51 @@ public interface IGuardCycleExecutor : IAsyncDisposable
 
 public sealed class GuardMonitorService : IAsyncDisposable
 {
+    private static readonly TimeSpan DefaultCompatibilityVerificationDelay =
+        TimeSpan.FromSeconds(10);
+
     private readonly JsonSettingsStore settingsStore;
     private readonly IGuardCycleExecutor cycleExecutor;
     private readonly SafeJsonlLogger? logger;
+    private readonly TimeProvider timeProvider;
+    private readonly TimeSpan compatibilityVerificationDelay;
     private readonly SemaphoreSlim cycleGate = new(1, 1);
     private readonly SemaphoreSlim refreshSignal = new(0, 1);
     private readonly CancellationTokenSource stopSource = new();
     private Task? monitorTask;
+    private Task? compatibilityVerificationTask;
+    private CancellationTokenSource? compatibilityVerificationSource;
     private CancellationTokenRegistration startCancellationRegistration;
     private GuardSettings currentSettings;
     private MonitorSnapshot currentSnapshot;
+    private string? compatibilityCandidateCode;
+    private DateTimeOffset? compatibilityCandidateEligibleAt;
+    private long compatibilityVerificationRevision;
+    private DateTimeOffset? lastSuccessfulObservationAt;
 
     public GuardMonitorService(
         JsonSettingsStore settingsStore,
         IGuardCycleExecutor cycleExecutor,
         GuardSettings initialSettings,
-        SafeJsonlLogger? logger = null)
+        SafeJsonlLogger? logger = null,
+        TimeProvider? timeProvider = null,
+        TimeSpan? compatibilityVerificationDelay = null)
     {
         this.settingsStore = settingsStore
             ?? throw new ArgumentNullException(nameof(settingsStore));
         this.cycleExecutor = cycleExecutor
             ?? throw new ArgumentNullException(nameof(cycleExecutor));
         this.logger = logger;
+        this.timeProvider = timeProvider ?? TimeProvider.System;
+        this.compatibilityVerificationDelay = compatibilityVerificationDelay
+            ?? DefaultCompatibilityVerificationDelay;
+        if (this.compatibilityVerificationDelay <= TimeSpan.Zero
+            || this.compatibilityVerificationDelay > TimeSpan.FromMinutes(1))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(compatibilityVerificationDelay));
+        }
+
         JsonSettingsStore.Validate(initialSettings);
         currentSettings = initialSettings;
         currentSnapshot = MonitorSnapshot.Waiting(initialSettings);
@@ -240,6 +279,72 @@ public sealed class GuardMonitorService : IAsyncDisposable
         return updatedSettings;
     }
 
+    public Task<GuardSettings> SetAutomationEnabledAsync(
+        SettingsUpdateService settingsUpdateService,
+        bool enabled,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(settingsUpdateService);
+        return ApplySettingsPatchAsync(
+            token => settingsUpdateService.SaveAutomationEnabledAsync(enabled, token),
+            requestRefresh: true,
+            cancellationToken);
+    }
+
+    public Task<GuardSettings> SetNotifyOnUsageResetAsync(
+        SettingsUpdateService settingsUpdateService,
+        bool enabled,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(settingsUpdateService);
+        return ApplySettingsPatchAsync(
+            token => settingsUpdateService.SaveNotifyOnUsageResetAsync(enabled, token),
+            requestRefresh: false,
+            cancellationToken);
+    }
+
+    public Task<GuardSettings> SetRemainingThresholdPercentAsync(
+        SettingsUpdateService settingsUpdateService,
+        int remainingThresholdPercent,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(settingsUpdateService);
+        return ApplySettingsPatchAsync(
+            token => settingsUpdateService.SaveRemainingThresholdPercentAsync(
+                remainingThresholdPercent,
+                token),
+            requestRefresh: true,
+            cancellationToken);
+    }
+
+    public Task<GuardSettings> SetPollIntervalMinutesAsync(
+        SettingsUpdateService settingsUpdateService,
+        int pollIntervalMinutes,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(settingsUpdateService);
+        return ApplySettingsPatchAsync(
+            token => settingsUpdateService.SavePollIntervalMinutesAsync(
+                pollIntervalMinutes,
+                token),
+            requestRefresh: true,
+            cancellationToken);
+    }
+
+    public Task<GuardSettings> SetCodexExecutablePathAsync(
+        SettingsUpdateService settingsUpdateService,
+        string? codexExecutablePath,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(settingsUpdateService);
+        return ApplySettingsPatchAsync(
+            token => settingsUpdateService.SaveCodexExecutablePathAsync(
+                codexExecutablePath,
+                token),
+            requestRefresh: false,
+            cancellationToken);
+    }
+
     public async Task<GuardSettings> SetCodexExecutablePathAsync(
         SettingsUpdateService settingsUpdateService,
         GuardSettings previousSettings,
@@ -257,7 +362,9 @@ public sealed class GuardMonitorService : IAsyncDisposable
                 previousSettings,
                 codexExecutablePath,
                 cancellationToken).ConfigureAwait(false);
-            ApplyPersistedSettings(updatedSettings);
+            ApplyPersistedSettings(
+                updatedSettings,
+                preserveCurrentObservation: true);
         }
         finally
         {
@@ -267,9 +374,40 @@ public sealed class GuardMonitorService : IAsyncDisposable
         return updatedSettings;
     }
 
+    private async Task<GuardSettings> ApplySettingsPatchAsync(
+        Func<CancellationToken, Task<GuardSettings>> savePatchAsync,
+        bool requestRefresh,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(savePatchAsync);
+
+        GuardSettings updatedSettings;
+        await cycleGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            updatedSettings = await savePatchAsync(cancellationToken)
+                .ConfigureAwait(false);
+            ApplyPersistedSettings(
+                updatedSettings,
+                preserveCurrentObservation: !requestRefresh);
+        }
+        finally
+        {
+            cycleGate.Release();
+        }
+
+        if (requestRefresh)
+        {
+            RequestRefresh();
+        }
+
+        return updatedSettings;
+    }
+
     public async ValueTask DisposeAsync()
     {
         stopSource.Cancel();
+        compatibilityVerificationSource?.Cancel();
         if (monitorTask is not null)
         {
             try
@@ -281,7 +419,19 @@ public sealed class GuardMonitorService : IAsyncDisposable
             }
         }
 
+        if (compatibilityVerificationTask is not null)
+        {
+            try
+            {
+                await compatibilityVerificationTask.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
         await cycleExecutor.DisposeAsync().ConfigureAwait(false);
+        compatibilityVerificationSource?.Dispose();
         startCancellationRegistration.Dispose();
         stopSource.Dispose();
         cycleGate.Dispose();
@@ -318,10 +468,16 @@ public sealed class GuardMonitorService : IAsyncDisposable
             {
                 settings = await settingsStore.LoadAsync(cancellationToken)
                     .ConfigureAwait(false);
+                if (!HasSameCodexExecutablePath(currentSettings, settings))
+                {
+                    ResetCompatibilityCandidate();
+                }
+
                 Volatile.Write(ref currentSettings, settings);
             }
             catch (SettingsException exception)
             {
+                ResetCompatibilityCandidate();
                 await TryLogSettingsFailureAsync(exception.ReasonCode)
                     .ConfigureAwait(false);
                 Publish(MonitorSnapshot.Failure(
@@ -334,7 +490,7 @@ public sealed class GuardMonitorService : IAsyncDisposable
             {
                 var result = await cycleExecutor.ExecuteAsync(settings, cancellationToken)
                     .ConfigureAwait(false);
-                Publish(MonitorSnapshot.FromResult(settings, result));
+                Publish(CreateSnapshotFromSuccessfulResult(settings, result));
             }
             catch (OperationCanceledException)
                 when (cancellationToken.IsCancellationRequested)
@@ -343,15 +499,30 @@ public sealed class GuardMonitorService : IAsyncDisposable
             }
             catch (AppServerException exception)
             {
+                if (IsProtocolCompatibilityFailure(exception))
+                {
+                    Publish(exception.Operation == AppServerOperation.Mutation
+                        ? CreateMutationCompatibilityFailure(settings)
+                        : CreateReadCompatibilityFailure(
+                            settings,
+                            CreateCompatibilitySignalCode(exception)));
+                    return;
+                }
+
+                ResetCompatibilityCandidate();
                 var pendingSnapshot = TryPreserveRetryPendingSnapshot(
                     settings,
-                    exception.Category);
+                    exception);
                 Publish(pendingSnapshot ?? MonitorSnapshot.Failure(
                     settings,
-                    ToCode(exception.Category)));
+                    ToCode(exception.Category)) with
+                {
+                    LastSuccessfulObservationAt = lastSuccessfulObservationAt,
+                });
             }
             catch (LiveStateException exception)
             {
+                ResetCompatibilityCandidate();
                 Publish(MonitorSnapshot.Failure(settings, exception.ReasonCode));
             }
             catch (Exception exception) when (
@@ -359,10 +530,12 @@ public sealed class GuardMonitorService : IAsyncDisposable
                     or UnauthorizedAccessException
                     or InvalidDataException)
             {
+                ResetCompatibilityCandidate();
                 Publish(MonitorSnapshot.Failure(settings, "local_runtime_failure"));
             }
             catch (Exception)
             {
+                ResetCompatibilityCandidate();
                 Publish(MonitorSnapshot.Failure(settings, "unexpected_local_failure"));
             }
         }
@@ -371,6 +544,272 @@ public sealed class GuardMonitorService : IAsyncDisposable
             cycleGate.Release();
         }
     }
+
+    private MonitorSnapshot CreateSnapshotFromSuccessfulResult(
+        GuardSettings settings,
+        GuardCycleResult result)
+    {
+        if (!result.AccountRateLimits.ConsumeSchemaCompatible
+            || string.Equals(
+                result.ActionCode,
+                "mutation_schema_unverified",
+                StringComparison.Ordinal)
+            || string.Equals(
+                result.ActionCode,
+                "live_protocol_blocked",
+                StringComparison.Ordinal))
+        {
+            ResetCompatibilityCandidate();
+            lastSuccessfulObservationAt = result.AccountRateLimits.ObservedAt;
+            return CreateMutationCompatibilitySnapshot(settings, result);
+        }
+
+        if (string.Equals(
+            result.ActionCode,
+            "protocol_read_unsupported",
+            StringComparison.Ordinal))
+        {
+            var semanticCode =
+                GetSemanticCompatibilityCode(
+                    result.Evaluation.Decision.Reason)
+                ?? result.ActionCode;
+            CancelCompatibilityVerification();
+            compatibilityCandidateCode =
+                CreateCompatibilityCandidateCode(semanticCode, settings);
+            compatibilityCandidateEligibleAt = timeProvider.GetUtcNow();
+            return CreateConfirmedReadCompatibilitySnapshot(settings);
+        }
+
+        if (string.Equals(
+            result.ActionCode,
+            "protocol_verification_pending",
+            StringComparison.Ordinal))
+        {
+            var semanticCode =
+                GetSemanticCompatibilityCode(
+                    result.Evaluation.Decision.Reason)
+                ?? result.ActionCode;
+            return CreateReadCompatibilityFailure(settings, semanticCode);
+        }
+
+        var semanticCompatibilityCode =
+            GetSemanticCompatibilityCode(result.Evaluation.Decision.Reason);
+        if (semanticCompatibilityCode is not null)
+        {
+            return CreateReadCompatibilityFailure(
+                settings,
+                semanticCompatibilityCode);
+        }
+
+        ResetCompatibilityCandidate();
+        lastSuccessfulObservationAt = result.AccountRateLimits.ObservedAt;
+        return MonitorSnapshot.FromResult(settings, result) with
+        {
+            CompatibilityState = CodexCompatibilityState.Compatible,
+            LastSuccessfulObservationAt = lastSuccessfulObservationAt,
+        };
+    }
+
+    private MonitorSnapshot CreateMutationCompatibilitySnapshot(
+        GuardSettings settings,
+        GuardCycleResult result) =>
+        MonitorSnapshot.FromResult(settings, result) with
+        {
+            ActionKind = CycleActionKind.Blocked,
+            StatusCode = "mutation_schema_unverified",
+            CompatibilityState = CodexCompatibilityState.MutationUnverified,
+            LastSuccessfulObservationAt = lastSuccessfulObservationAt,
+        };
+
+    private MonitorSnapshot CreateMutationCompatibilityFailure(
+        GuardSettings settings)
+    {
+        ResetCompatibilityCandidate();
+        var snapshot = CurrentSnapshot;
+        if (snapshot.Weekly is not null)
+        {
+            return snapshot with
+            {
+                ObservedAt = timeProvider.GetUtcNow(),
+                Settings = settings,
+                ActionKind = CycleActionKind.Blocked,
+                StatusCode = "mutation_schema_unverified",
+                IsFailure = true,
+                UsageResetDetection = null,
+                CompatibilityState =
+                    CodexCompatibilityState.MutationUnverified,
+                LastSuccessfulObservationAt =
+                    lastSuccessfulObservationAt,
+            };
+        }
+
+        return MonitorSnapshot.Failure(
+            settings,
+            "mutation_schema_unverified") with
+        {
+            ObservedAt = timeProvider.GetUtcNow(),
+            CompatibilityState = CodexCompatibilityState.MutationUnverified,
+            LastSuccessfulObservationAt = lastSuccessfulObservationAt,
+        };
+    }
+
+    private MonitorSnapshot CreateReadCompatibilityFailure(
+        GuardSettings settings,
+        string signalCode)
+    {
+        var confirmed = RegisterCompatibilityCandidate(
+            CreateCompatibilityCandidateCode(signalCode, settings));
+
+        return confirmed
+            ? CreateConfirmedReadCompatibilitySnapshot(settings)
+            : CreatePendingReadCompatibilitySnapshot(settings);
+    }
+
+    private MonitorSnapshot CreatePendingReadCompatibilitySnapshot(
+        GuardSettings settings) =>
+        MonitorSnapshot.Failure(
+            settings,
+            "protocol_verification_pending") with
+        {
+            ObservedAt = timeProvider.GetUtcNow(),
+            CompatibilityState = CodexCompatibilityState.VerificationPending,
+            LastSuccessfulObservationAt = lastSuccessfulObservationAt,
+        };
+
+    private MonitorSnapshot CreateConfirmedReadCompatibilitySnapshot(
+        GuardSettings settings) =>
+        MonitorSnapshot.Failure(
+            settings,
+            "protocol_read_unsupported") with
+        {
+            ObservedAt = timeProvider.GetUtcNow(),
+            CompatibilityState = CodexCompatibilityState.ReadUnsupported,
+            LastSuccessfulObservationAt = lastSuccessfulObservationAt,
+        };
+
+    private void ResetCompatibilityCandidate()
+    {
+        compatibilityCandidateCode = null;
+        compatibilityCandidateEligibleAt = null;
+        CancelCompatibilityVerification();
+    }
+
+    private void CancelCompatibilityVerification()
+    {
+        Interlocked.Increment(ref compatibilityVerificationRevision);
+        compatibilityVerificationSource?.Cancel();
+        compatibilityVerificationSource?.Dispose();
+        compatibilityVerificationSource = null;
+    }
+
+    private bool RegisterCompatibilityCandidate(string candidateCode)
+    {
+        var now = timeProvider.GetUtcNow();
+        if (string.Equals(
+            compatibilityCandidateCode,
+            candidateCode,
+            StringComparison.Ordinal))
+        {
+            var confirmed = compatibilityCandidateEligibleAt is { } eligibleAt
+                && now >= eligibleAt;
+            if (confirmed)
+            {
+                CancelCompatibilityVerification();
+            }
+
+            return confirmed;
+        }
+
+        compatibilityCandidateCode = candidateCode;
+        compatibilityCandidateEligibleAt =
+            now.Add(compatibilityVerificationDelay);
+        ScheduleCompatibilityVerification(
+            compatibilityCandidateEligibleAt.Value);
+        return false;
+    }
+
+    private void ScheduleCompatibilityVerification(DateTimeOffset eligibleAt)
+    {
+        CancelCompatibilityVerification();
+        if (monitorTask is null)
+        {
+            return;
+        }
+
+        compatibilityVerificationSource =
+            CancellationTokenSource.CreateLinkedTokenSource(stopSource.Token);
+        var revision = Volatile.Read(ref compatibilityVerificationRevision);
+        compatibilityVerificationTask =
+            ScheduleCompatibilityVerificationAsync(
+                eligibleAt,
+                revision,
+                compatibilityVerificationSource.Token);
+    }
+
+    private async Task ScheduleCompatibilityVerificationAsync(
+        DateTimeOffset eligibleAt,
+        long revision,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var delay = eligibleAt - timeProvider.GetUtcNow();
+            if (delay > TimeSpan.Zero)
+            {
+                await Task.Delay(
+                    delay,
+                    timeProvider,
+                    cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException)
+            when (cancellationToken.IsCancellationRequested)
+        {
+            return;
+        }
+
+        if (cancellationToken.IsCancellationRequested
+            || revision != Volatile.Read(
+                ref compatibilityVerificationRevision))
+        {
+            return;
+        }
+
+        RequestRefresh();
+    }
+
+    private static string CreateCompatibilitySignalCode(
+        AppServerException exception) => string.Concat(
+            ToCode(exception.Category),
+            ":",
+            exception.RemoteCode?.ToString(
+                System.Globalization.CultureInfo.InvariantCulture)
+                ?? "none");
+
+    private static string CreateCompatibilityCandidateCode(
+        string signalCode,
+        GuardSettings settings) =>
+        string.Concat(
+            signalCode,
+            "|",
+            GetCompatibilityContext(settings));
+
+    private static string GetCompatibilityContext(GuardSettings settings) =>
+        settings.CodexExecutablePath?.ToUpperInvariant() ?? "<AUTO>";
+
+    private static string? GetSemanticCompatibilityCode(
+        DecisionReason reason) => reason switch
+        {
+            DecisionReason.CodexBucketMissing => "codex_bucket_missing",
+            DecisionReason.CodexBucketMismatch => "codex_bucket_mismatch",
+            DecisionReason.AmbiguousLegacyBucket => "ambiguous_legacy_bucket",
+            DecisionReason.SelectedWindowMissing => "selected_window_missing",
+            DecisionReason.SelectedWindowAmbiguous => "selected_window_ambiguous",
+            DecisionReason.InvalidUsedPercent => "invalid_used_percent",
+            DecisionReason.InvalidResetTime => "invalid_reset_time",
+            DecisionReason.InvalidCreditCount => "invalid_credit_count",
+            _ => null,
+        };
 
     private void Publish(MonitorSnapshot snapshot)
     {
@@ -394,18 +833,38 @@ public sealed class GuardMonitorService : IAsyncDisposable
         }
     }
 
-    private void ApplyPersistedSettings(GuardSettings settings)
+    private void ApplyPersistedSettings(
+        GuardSettings settings,
+        bool preserveCurrentObservation = false)
     {
         JsonSettingsStore.Validate(settings);
+        if (!HasSameCodexExecutablePath(currentSettings, settings))
+        {
+            ResetCompatibilityCandidate();
+        }
+
         Volatile.Write(ref currentSettings, settings);
-        Publish(MonitorSnapshot.Waiting(settings));
+        Publish(preserveCurrentObservation
+            ? CurrentSnapshot with
+            {
+                Settings = settings,
+                UsageResetDetection = null,
+            }
+            : MonitorSnapshot.Waiting(settings));
     }
+
+    private static bool HasSameCodexExecutablePath(
+        GuardSettings first,
+        GuardSettings second) => string.Equals(
+            first.CodexExecutablePath,
+            second.CodexExecutablePath,
+            StringComparison.OrdinalIgnoreCase);
 
     private MonitorSnapshot? TryPreserveRetryPendingSnapshot(
         GuardSettings settings,
-        AppServerFailureCategory category)
+        AppServerException exception)
     {
-        if (!IsRetryable(category))
+        if (!IsRetryable(exception))
         {
             return null;
         }
@@ -425,10 +884,19 @@ public sealed class GuardMonitorService : IAsyncDisposable
             ObservedAt = DateTimeOffset.UtcNow,
             Settings = settings,
             IsFailure = true,
+            UsageResetDetection = null,
         };
     }
 
-    private static bool IsRetryable(AppServerFailureCategory category) => category is
+    private static bool IsProtocolCompatibilityFailure(
+        AppServerException exception) =>
+        exception.Category == AppServerFailureCategory.InvalidResponse
+        || (exception.Category == AppServerFailureCategory.RemoteError
+            && exception.RemoteCode is -32601 or -32602);
+
+    private static bool IsRetryable(AppServerException exception) =>
+        !IsProtocolCompatibilityFailure(exception)
+        && exception.Category is
         AppServerFailureCategory.ExecutableNotFound
         or AppServerFailureCategory.ExecutableBecameUnavailable
         or AppServerFailureCategory.StartFailed

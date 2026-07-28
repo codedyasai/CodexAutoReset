@@ -9,13 +9,18 @@ namespace CodexAutoReset.Core;
 /// </summary>
 public sealed class LiveResetSafetyLatch
 {
+    private const int CurrentMarkerSchemaVersion = 3;
+    private const int MaximumCompatibilityRevisionLength = 128;
     private const int MaximumMarkerBytes = 4 * 1024;
     private const string MarkerFileName = "live-safety-block.json";
+    private const string MutationAmbiguousOrigin = "mutationAmbiguous";
 
     private readonly string? durablePath;
     private readonly string? temporaryPath;
+    private readonly string? currentCompatibilityRevision;
     private readonly Action? beforePersist;
     private readonly object durabilityGate = new();
+    private string? blockedCompatibilityRevision;
     private int blockReason;
     private int durabilityState;
 
@@ -24,11 +29,37 @@ public sealed class LiveResetSafetyLatch
     }
 
     public LiveResetSafetyLatch(string durablePath)
-        : this(durablePath, beforePersist: null)
+        : this(
+            durablePath,
+            currentCompatibilityRevision: null,
+            beforePersist: null)
+    {
+    }
+
+    public LiveResetSafetyLatch(
+        string durablePath,
+        string currentCompatibilityRevision)
+        : this(
+            durablePath,
+            ValidateCompatibilityRevision(
+                currentCompatibilityRevision,
+                nameof(currentCompatibilityRevision)),
+            beforePersist: null)
     {
     }
 
     internal LiveResetSafetyLatch(string durablePath, Action? beforePersist)
+        : this(
+            durablePath,
+            currentCompatibilityRevision: null,
+            beforePersist)
+    {
+    }
+
+    private LiveResetSafetyLatch(
+        string durablePath,
+        string? currentCompatibilityRevision,
+        Action? beforePersist)
     {
         if (string.IsNullOrWhiteSpace(durablePath))
         {
@@ -45,11 +76,12 @@ public sealed class LiveResetSafetyLatch
         }
 
         temporaryPath = this.durablePath + ".tmp";
+        this.currentCompatibilityRevision = currentCompatibilityRevision;
         this.beforePersist = beforePersist;
-        var loadedReason = LoadReason(this.durablePath, temporaryPath);
-        if (loadedReason is not null)
+        var loadedMarker = LoadMarker(this.durablePath, temporaryPath);
+        if (loadedMarker is not null)
         {
-            blockReason = Encode(loadedReason.Value);
+            blockReason = Encode(loadedMarker.Value.Reason);
             durabilityState = 1;
         }
     }
@@ -60,12 +92,43 @@ public sealed class LiveResetSafetyLatch
         Volatile.Read(ref blockReason));
 
     public void BlockProtocolMismatch() => Block(
-        LiveAttemptBlockReason.ProtocolMismatch);
+        LiveAttemptBlockReason.ProtocolMismatch,
+        currentCompatibilityRevision);
+
+    public void BlockProtocolMismatch(string compatibilityRevision) => Block(
+        LiveAttemptBlockReason.ProtocolMismatch,
+        ValidateCompatibilityRevision(
+            compatibilityRevision,
+            nameof(compatibilityRevision)));
 
     public void BlockUnknownFailure() => Block(
-        LiveAttemptBlockReason.UnknownFailure);
+        LiveAttemptBlockReason.UnknownFailure,
+        compatibilityRevision: null);
 
-    internal void Block(LiveAttemptBlockReason reason)
+    internal void Block(LiveAttemptBlockReason reason) => Block(
+        reason,
+        reason == LiveAttemptBlockReason.ProtocolMismatch
+            ? currentCompatibilityRevision
+            : null);
+
+    public bool TryClearProtocolMismatch(
+        bool compatibilityValidationSucceeded,
+        bool hasUnresolvedAttempt) => false;
+
+    public bool TryClearProtocolMismatch(
+        string currentCompatibilityRevision,
+        bool compatibilityValidationSucceeded,
+        bool hasUnresolvedAttempt)
+    {
+        _ = ValidateCompatibilityRevision(
+            currentCompatibilityRevision,
+            nameof(currentCompatibilityRevision));
+        return false;
+    }
+
+    private void Block(
+        LiveAttemptBlockReason reason,
+        string? compatibilityRevision)
     {
         if (reason is not (LiveAttemptBlockReason.ProtocolMismatch
             or LiveAttemptBlockReason.UnknownFailure))
@@ -73,11 +136,19 @@ public sealed class LiveResetSafetyLatch
             throw new ArgumentOutOfRangeException(nameof(reason));
         }
 
-        Interlocked.CompareExchange(
-            ref blockReason,
-            Encode(reason),
-            comparand: 0);
-        PersistIfRequired();
+        lock (durabilityGate)
+        {
+            if (blockReason == 0)
+            {
+                blockedCompatibilityRevision =
+                    reason == LiveAttemptBlockReason.ProtocolMismatch
+                        ? compatibilityRevision
+                        : null;
+                Volatile.Write(ref blockReason, Encode(reason));
+            }
+
+            PersistIfRequired();
+        }
     }
 
     internal void ThrowIfBlocked()
@@ -100,48 +171,72 @@ public sealed class LiveResetSafetyLatch
             return;
         }
 
-        lock (durabilityGate)
+        if (durabilityState != 0)
         {
-            if (durabilityState != 0)
-            {
-                return;
-            }
+            return;
+        }
 
-            try
+        try
+        {
+            beforePersist?.Invoke();
+            var directory = Path.GetDirectoryName(durablePath)
+                ?? throw new IOException("live_safety_block_path_invalid");
+            Directory.CreateDirectory(directory);
+            var reason = BlockReason == LiveAttemptBlockReason.ProtocolMismatch
+                ? "protocolMismatch"
+                : "unknownFailure";
+            byte[] bytes;
+            if (reason == "protocolMismatch"
+                && blockedCompatibilityRevision is not null)
             {
-                beforePersist?.Invoke();
-                var directory = Path.GetDirectoryName(durablePath)
-                    ?? throw new IOException("live_safety_block_path_invalid");
-                Directory.CreateDirectory(directory);
-                var reason = BlockReason == LiveAttemptBlockReason.ProtocolMismatch
-                    ? "protocolMismatch"
-                    : "unknownFailure";
-                var bytes = Encoding.UTF8.GetBytes(
-                    $"{{\"schemaVersion\":1,\"reason\":\"{reason}\"}}");
-                using (var stream = new FileStream(
-                    temporaryPath,
-                    FileMode.CreateNew,
-                    FileAccess.Write,
-                    FileShare.None,
-                    bufferSize: 4096,
-                    FileOptions.WriteThrough))
+                using var memory = new MemoryStream();
+                using (var writer = new Utf8JsonWriter(memory))
                 {
-                    stream.Write(bytes);
-                    stream.Flush(flushToDisk: true);
+                    writer.WriteStartObject();
+                    writer.WriteNumber(
+                        "schemaVersion",
+                        CurrentMarkerSchemaVersion);
+                    writer.WriteString("reason", reason);
+                    writer.WriteString(
+                        "compatibilityRevision",
+                        blockedCompatibilityRevision);
+                    writer.WriteString(
+                        "origin",
+                        MutationAmbiguousOrigin);
+                    writer.WriteEndObject();
                 }
 
-                File.Move(temporaryPath, durablePath, overwrite: false);
-                durabilityState = 1;
+                bytes = memory.ToArray();
             }
-            catch (Exception exception) when (!IsFatal(exception))
+            else
             {
-                durabilityState = 2;
-                throw new LiveStateException("live_safety_block_persist_failed");
+                bytes = Encoding.UTF8.GetBytes(
+                    $"{{\"schemaVersion\":1,\"reason\":\"{reason}\"}}");
             }
+
+            using (var stream = new FileStream(
+                temporaryPath,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None,
+                bufferSize: 4096,
+                FileOptions.WriteThrough))
+            {
+                stream.Write(bytes);
+                stream.Flush(flushToDisk: true);
+            }
+
+            File.Move(temporaryPath, durablePath, overwrite: false);
+            durabilityState = 1;
+        }
+        catch (Exception exception) when (!IsFatal(exception))
+        {
+            durabilityState = 2;
+            throw new LiveStateException("live_safety_block_persist_failed");
         }
     }
 
-    private static LiveAttemptBlockReason? LoadReason(
+    private static LoadedMarker? LoadMarker(
         string path,
         string temporaryPath)
     {
@@ -149,7 +244,7 @@ public sealed class LiveResetSafetyLatch
         {
             if (HasFileSystemEvidence(temporaryPath))
             {
-                return LiveAttemptBlockReason.UnknownFailure;
+                return LoadedMarker.UnknownFailure;
             }
 
             if (!HasFileSystemEvidence(path))
@@ -161,7 +256,7 @@ public sealed class LiveResetSafetyLatch
             if (attributes.HasFlag(FileAttributes.Directory)
                 || attributes.HasFlag(FileAttributes.ReparsePoint))
             {
-                return LiveAttemptBlockReason.UnknownFailure;
+                return LoadedMarker.UnknownFailure;
             }
 
             using var stream = new FileStream(
@@ -173,7 +268,7 @@ public sealed class LiveResetSafetyLatch
                 FileOptions.SequentialScan);
             if (stream.Length is <= 0 or > MaximumMarkerBytes)
             {
-                return LiveAttemptBlockReason.UnknownFailure;
+                return LoadedMarker.UnknownFailure;
             }
 
             using var document = JsonDocument.Parse(stream, new JsonDocumentOptions
@@ -185,42 +280,126 @@ public sealed class LiveResetSafetyLatch
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object)
             {
-                return LiveAttemptBlockReason.UnknownFailure;
+                return LoadedMarker.UnknownFailure;
             }
 
             var names = new HashSet<string>(StringComparer.Ordinal);
             foreach (var property in root.EnumerateObject())
             {
-                if (!names.Add(property.Name)
-                    || property.Name is not ("schemaVersion" or "reason"))
+                if (!names.Add(property.Name))
                 {
-                    return LiveAttemptBlockReason.UnknownFailure;
+                    return LoadedMarker.UnknownFailure;
                 }
             }
 
-            if (names.Count != 2
-                || !root.TryGetProperty("schemaVersion", out var schemaVersion)
+            if (!root.TryGetProperty(
+                    "schemaVersion",
+                    out var schemaVersion)
                 || schemaVersion.ValueKind != JsonValueKind.Number
                 || !schemaVersion.TryGetInt32(out var version)
-                || version != 1
                 || !root.TryGetProperty("reason", out var reason)
                 || reason.ValueKind != JsonValueKind.String)
             {
-                return LiveAttemptBlockReason.UnknownFailure;
+                return LoadedMarker.UnknownFailure;
             }
 
-            return reason.GetString() switch
+            if (version == 1)
             {
-                "protocolMismatch" => LiveAttemptBlockReason.ProtocolMismatch,
-                "unknownFailure" => LiveAttemptBlockReason.UnknownFailure,
-                _ => LiveAttemptBlockReason.UnknownFailure,
-            };
+                if (names.Count != 2
+                    || names.Any(name => name is not (
+                        "schemaVersion" or "reason")))
+                {
+                    return LoadedMarker.UnknownFailure;
+                }
+
+                return reason.GetString() switch
+                {
+                    "protocolMismatch" => new LoadedMarker(
+                        LiveAttemptBlockReason.ProtocolMismatch),
+                    "unknownFailure" => LoadedMarker.UnknownFailure,
+                    _ => LoadedMarker.UnknownFailure,
+                };
+            }
+
+            if (version == 2)
+            {
+                if (names.Count != 3
+                    || names.Any(name => name is not (
+                        "schemaVersion"
+                        or "reason"
+                        or "compatibilityRevision"))
+                    || !string.Equals(
+                        reason.GetString(),
+                        "protocolMismatch",
+                        StringComparison.Ordinal)
+                    || !root.TryGetProperty(
+                        "compatibilityRevision",
+                        out var legacyCompatibilityRevision)
+                    || legacyCompatibilityRevision.ValueKind
+                        != JsonValueKind.String
+                    || !IsValidCompatibilityRevision(
+                        legacyCompatibilityRevision.GetString()))
+                {
+                    return LoadedMarker.UnknownFailure;
+                }
+
+                return new LoadedMarker(
+                    LiveAttemptBlockReason.ProtocolMismatch);
+            }
+
+            if (version != CurrentMarkerSchemaVersion
+                || names.Count != 4
+                || names.Any(name => name is not (
+                    "schemaVersion"
+                    or "reason"
+                    or "compatibilityRevision"
+                    or "origin"))
+                || !string.Equals(
+                    reason.GetString(),
+                    "protocolMismatch",
+                    StringComparison.Ordinal)
+                || !root.TryGetProperty(
+                    "compatibilityRevision",
+                    out var compatibilityRevision)
+                || compatibilityRevision.ValueKind != JsonValueKind.String
+                || !IsValidCompatibilityRevision(
+                    compatibilityRevision.GetString())
+                || !root.TryGetProperty("origin", out var origin)
+                || origin.ValueKind != JsonValueKind.String
+                || !string.Equals(
+                    origin.GetString(),
+                    MutationAmbiguousOrigin,
+                    StringComparison.Ordinal))
+            {
+                return LoadedMarker.UnknownFailure;
+            }
+
+            return new LoadedMarker(
+                LiveAttemptBlockReason.ProtocolMismatch);
         }
         catch (Exception exception) when (!IsFatal(exception))
         {
-            return LiveAttemptBlockReason.UnknownFailure;
+            return LoadedMarker.UnknownFailure;
         }
     }
+
+    private static string ValidateCompatibilityRevision(
+        string revision,
+        string parameterName)
+    {
+        if (!IsValidCompatibilityRevision(revision))
+        {
+            throw new ArgumentException(
+                "live_compatibility_revision_invalid",
+                parameterName);
+        }
+
+        return revision;
+    }
+
+    private static bool IsValidCompatibilityRevision(string? revision) =>
+        revision is { Length: > 0 and <= MaximumCompatibilityRevisionLength }
+        && revision.All(character => character is >= '!' and <= '~');
 
     private static bool HasFileSystemEvidence(string path)
     {
@@ -264,4 +443,11 @@ public sealed class LiveResetSafetyLatch
         OutOfMemoryException
         or StackOverflowException
         or AccessViolationException;
+
+    private readonly record struct LoadedMarker(
+        LiveAttemptBlockReason Reason)
+    {
+        public static LoadedMarker UnknownFailure { get; } = new(
+            LiveAttemptBlockReason.UnknownFailure);
+    }
 }

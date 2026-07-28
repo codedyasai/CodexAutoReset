@@ -5,7 +5,7 @@
         Icon="Assets/CodexAutoReset.ico"
         Width="800"
         Height="820"
-        MinWidth="560"
+        MinWidth="680"
         MinHeight="620"
         Background="{StaticResource AppBackgroundBrush}"
         Foreground="{StaticResource PrimaryTextBrush}"
@@ -25,40 +25,24 @@
                 BorderBrush="{StaticResource BorderBrush}"
                 BorderThickness="0,0,0,1"
                 Padding="24,17">
-            <Grid>
+            <Grid x:Name="AppHeaderGrid">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
 
-                <Image Width="40"
-                       Height="40"
-                       Source="Assets/CodexAutoReset.ico"
+                <Image Width="126"
+                       Height="48"
+                       Source="Assets/CodexAutoResetWordmark.png"
                        Stretch="Uniform"
-                       AutomationProperties.Name="CodexAutoReset 방패와 사용량 게이지 아이콘" />
+                       AutomationProperties.Name="Codex Reset 딱지 워드마크" />
 
                 <StackPanel Grid.Column="1"
-                            Margin="13,0,16,0"
+                            Margin="15,0,0,0"
                             VerticalAlignment="Center">
-                    <TextBlock FontSize="18"
-                               FontWeight="SemiBold"
-                               Text="CodexAutoReset" />
                     <TextBlock Style="{StaticResource CaptionTextStyle}"
                                Text="주간 사용량과 초기화권을 한곳에서 관리합니다." />
                 </StackPanel>
-
-                <Border Grid.Column="2"
-                        VerticalAlignment="Center"
-                        Background="{StaticResource SurfaceBrush}"
-                        BorderBrush="{StaticResource BorderBrush}"
-                        BorderThickness="1"
-                        CornerRadius="14"
-                        Padding="11,6">
-                    <TextBlock FontSize="12"
-                               FontWeight="SemiBold"
-                               Text="{Binding AutomationStateText}" />
-                </Border>
             </Grid>
         </Border>
 
@@ -84,47 +68,44 @@
                                    Style="{StaticResource CaptionTextStyle}"
                                    Text="대부분 자동으로 연결됩니다. 찾지 못할 때만 Codex 설치 폴더의 codex.exe를 직접 선택하세요." />
 
-                        <Border Margin="0,18,0,0"
+                        <Border x:Name="CodexConnectionPathBox"
+                                Margin="0,18,0,0"
                                 Padding="14,12"
                                 Background="{StaticResource SurfaceBrush}"
                                 BorderBrush="{StaticResource BorderBrush}"
                                 BorderThickness="1"
                                 CornerRadius="10">
-                            <StackPanel>
-                                <TextBlock FontWeight="SemiBold"
-                                           Text="{Binding CodexExecutableModeText}" />
-                                <TextBlock Margin="0,5,0,0"
+                            <Grid x:Name="CodexConnectionPathPanel">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+
+                                <TextBlock Margin="0,0,12,0"
+                                           VerticalAlignment="Center"
                                            Style="{StaticResource CaptionTextStyle}"
                                            Text="{Binding CodexExecutableDisplayText}"
+                                           TextWrapping="NoWrap"
+                                           TextTrimming="CharacterEllipsis"
+                                           ToolTip="{Binding CodexExecutableDisplayText}"
                                            AutomationProperties.Name="현재 Codex 실행 파일 경로" />
-                            </StackPanel>
+
+                                <Button Grid.Column="1"
+                                        Margin="0,0,8,0"
+                                        Content="자동 찾기"
+                                        IsEnabled="{Binding CanEditCodexConnection}"
+                                        AutomationProperties.Name="Codex 실행 파일 자동 찾기"
+                                        Click="OnUseAutomaticCodexExecutableClick" />
+                                <Button Grid.Column="2"
+                                        Content="Codex.exe 직접 찾기"
+                                        IsEnabled="{Binding CanEditCodexConnection}"
+                                        AutomationProperties.Name="Codex 실행 파일 직접 선택"
+                                        AutomationProperties.HelpText="선택하면 연결 경로만 바로 저장됩니다. 초기화권 자동 사용 설정은 바뀌지 않으며, 사용량은 설정된 주기에 다시 확인합니다."
+                                        Click="OnSelectCodexExecutableClick" />
+                            </Grid>
                         </Border>
 
-                        <WrapPanel Margin="0,14,0,0">
-                            <Button Margin="0,0,8,0"
-                                    Content="codex.exe 선택"
-                                    IsEnabled="{Binding CanEditCodexConnection}"
-                                    AutomationProperties.Name="Codex 실행 파일 직접 선택"
-                                    AutomationProperties.HelpText="선택하면 연결 경로만 바로 저장됩니다. 자동 초기화 설정은 바뀌지 않으며, 사용량은 설정된 주기에 다시 확인합니다."
-                                    Click="OnSelectCodexExecutableClick" />
-                            <Button Content="자동으로 찾기"
-                                    IsEnabled="{Binding CanEditCodexConnection}"
-                                    AutomationProperties.Name="Codex 실행 파일 자동 찾기로 되돌리기"
-                                    Click="OnUseAutomaticCodexExecutableClick">
-                                <Button.Style>
-                                    <Style TargetType="Button"
-                                           BasedOn="{StaticResource {x:Type Button}}">
-                                        <Setter Property="Visibility" Value="Collapsed" />
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding HasCustomCodexExecutablePath}"
-                                                         Value="True">
-                                                <Setter Property="Visibility" Value="Visible" />
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </Button.Style>
-                            </Button>
-                        </WrapPanel>
                         <TextBlock Margin="0,10,0,0"
                                    Text="{Binding CodexConnectionStatus}"
                                    AutomationProperties.LiveSetting="Polite">
@@ -162,21 +143,67 @@
                                            FontWeight="SemiBold"
                                            Text="{Binding WeeklyRemainingText}" />
                             </StackPanel>
-                            <Button x:Name="RefreshButton"
-                                    Grid.Column="1"
-                                    Width="42"
-                                    Height="42"
-                                    MinWidth="42"
-                                    Margin="12,0,0,0"
-                                    Padding="0"
-                                    VerticalAlignment="Top"
-                                    ToolTip="새로고침"
-                                    AutomationProperties.Name="주간 사용량 새로고침"
-                                    Click="OnRefreshClick">
-                                <TextBlock FontFamily="Segoe MDL2 Assets"
-                                           FontSize="18"
-                                           Text="&#xE72C;" />
-                            </Button>
+                            <StackPanel Grid.Column="1"
+                                        Margin="12,0,0,0"
+                                        HorizontalAlignment="Center">
+                                <Button x:Name="RefreshButton"
+                                        Width="42"
+                                        Height="42"
+                                        MinWidth="42"
+                                        Padding="0"
+                                        VerticalAlignment="Top"
+                                        ToolTip="새로고침"
+                                        IsEnabled="{Binding CanRefresh}"
+                                        AutomationProperties.Name="{Binding RefreshAutomationName}"
+                                        Click="OnRefreshClick">
+                                    <TextBlock FontFamily="Segoe MDL2 Assets"
+                                               FontSize="18"
+                                               RenderTransformOrigin="0.5,0.5"
+                                               Text="&#xE72C;">
+                                        <TextBlock.RenderTransform>
+                                            <RotateTransform />
+                                        </TextBlock.RenderTransform>
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsRefreshAnimationActive}"
+                                                                 Value="True">
+                                                        <DataTrigger.EnterActions>
+                                                            <BeginStoryboard x:Name="RefreshSpinStoryboard">
+                                                                <Storyboard RepeatBehavior="Forever">
+                                                                    <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
+                                                                                     From="0"
+                                                                                     To="360"
+                                                                                     Duration="0:0:0.8" />
+                                                                </Storyboard>
+                                                            </BeginStoryboard>
+                                                        </DataTrigger.EnterActions>
+                                                        <DataTrigger.ExitActions>
+                                                            <RemoveStoryboard BeginStoryboardName="RefreshSpinStoryboard" />
+                                                        </DataTrigger.ExitActions>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </Button>
+                                <TextBlock Margin="0,5,0,0"
+                                           HorizontalAlignment="Center"
+                                           FontSize="11"
+                                           Foreground="{StaticResource SecondaryTextBrush}"
+                                           Text="{Binding RefreshStatusText}"
+                                           AutomationProperties.LiveSetting="Polite">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Style.Triggers>
+                                                <Trigger Property="Text" Value="">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </Trigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </StackPanel>
                         </Grid>
 
                         <ProgressBar Margin="0,18,0,10"
@@ -188,16 +215,92 @@
                         <TextBlock Style="{StaticResource CaptionTextStyle}"
                                    Text="{Binding WeeklyResetStatus}" />
 
-                        <Border Margin="0,18,0,0"
+                        <Border x:Name="OverallStatusPanel"
+                                Margin="0,18,0,0"
                                 Padding="12,10"
-                                Background="{StaticResource SurfaceBrush}"
-                                BorderBrush="{StaticResource BorderBrush}"
                                 BorderThickness="1"
                                 CornerRadius="9">
-                            <TextBlock Text="{Binding OverallStatus}"
-                                       TextWrapping="Wrap"
-                                       LineHeight="21"
-                                       AutomationProperties.LiveSetting="Polite" />
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Background"
+                                            Value="{StaticResource SurfaceBrush}" />
+                                    <Setter Property="BorderBrush"
+                                            Value="{StaticResource BorderBrush}" />
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsOverallStatusVisible}"
+                                                     Value="True">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding IsCompatibilityWarning}"
+                                                     Value="True">
+                                            <Setter Property="Background" Value="#FFF4E5" />
+                                            <Setter Property="BorderBrush" Value="#D97706" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock x:Name="CompatibilityWarningIcon"
+                                           Margin="0,2,10,0"
+                                           VerticalAlignment="Top"
+                                           FontFamily="Segoe MDL2 Assets"
+                                           FontSize="17"
+                                           Foreground="#B45309"
+                                           Text="&#xE7BA;"
+                                           AutomationProperties.Name="호환성 경고">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsCompatibilityWarning}"
+                                                             Value="True">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <StackPanel Grid.Column="1">
+                                    <TextBlock x:Name="OverallStatusTitleText"
+                                               FontWeight="SemiBold"
+                                               Foreground="#7C2D12"
+                                               Text="{Binding OverallStatusTitle}"
+                                               TextWrapping="Wrap">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsOverallStatusTitleVisible}"
+                                                                 Value="True">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <TextBlock x:Name="OverallStatusBodyText"
+                                               Text="{Binding OverallStatus}"
+                                               TextWrapping="Wrap"
+                                               LineHeight="21"
+                                               AutomationProperties.LiveSetting="Polite">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsOverallStatusTitleVisible}"
+                                                                 Value="True">
+                                                        <Setter Property="Margin" Value="0,5,0,0" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
+                            </Grid>
                         </Border>
 
                         <Separator Margin="0,20"
@@ -226,7 +329,7 @@
                             <StackPanel Grid.Column="2"
                                         Margin="20,0,0,0">
                                 <TextBlock Style="{StaticResource CaptionTextStyle}"
-                                           Text="마지막 확인" />
+                                           Text="마지막 정상 확인" />
                                 <TextBlock Margin="0,7,0,0"
                                            FontSize="16"
                                            FontWeight="SemiBold"
@@ -241,31 +344,11 @@
                         Grid.Row="2"
                         Style="{StaticResource CardBorderStyle}">
                     <StackPanel>
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Margin="0,0,18,0">
-                                <TextBlock Style="{StaticResource SectionHeadingTextStyle}"
-                                           Text="설정" />
-                                <TextBlock Margin="0,4,0,0"
-                                           Style="{StaticResource CaptionTextStyle}"
-                                           Text="자동 초기화와 사용량 확인 방법을 한곳에서 관리합니다." />
-                            </StackPanel>
-                            <Button x:Name="SaveButton"
-                                    Grid.Column="1"
-                                    MinWidth="96"
-                                    VerticalAlignment="Top"
-                                    IsEnabled="{Binding CanEditCodexConnection}"
-                                    IsDefault="True"
-                                    Style="{StaticResource PrimaryButtonStyle}"
-                                    AutomationProperties.Name="설정 저장"
-                                    Click="OnSaveClick">
-                                <TextBlock Foreground="#FFFFFF"
-                                           Text="설정 저장" />
-                            </Button>
-                        </Grid>
+                        <TextBlock Style="{StaticResource SectionHeadingTextStyle}"
+                                   Text="설정" />
+                        <TextBlock Margin="0,4,0,0"
+                                   Style="{StaticResource CaptionTextStyle}"
+                                   Text="값을 바꾸면 자동으로 적용됩니다." />
 
                         <TextBlock Margin="0,10,0,0"
                                    Foreground="{StaticResource SecondaryTextBrush}"
@@ -286,53 +369,127 @@
                         <Separator Margin="0,18"
                                    Background="{StaticResource BorderBrush}" />
 
-                        <Grid>
+                        <Grid x:Name="SettingsSplitGrid">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Margin="0,0,18,0">
-                                <TextBlock FontSize="16"
-                                           FontWeight="SemiBold"
-                                           Text="자동 초기화" />
-                                <TextBlock Margin="0,4,0,0"
-                                           Style="{StaticResource CaptionTextStyle}"
-                                           Text="꺼져 있어도 사용량은 계속 확인합니다." />
-                            </StackPanel>
-                            <CheckBox Grid.Column="1"
-                                      VerticalAlignment="Center"
-                                      IsChecked="{Binding AutomationEnabled}"
-                                      Style="{StaticResource ToggleSwitchStyle}"
-                                      AutomationProperties.Name="자동 초기화"
-                                      AutomationProperties.HelpText="켜면 임계값 도달 시 초기화권을 사용할 수 있습니다." />
-                        </Grid>
-
-                        <Border Margin="0,16,0,0"
-                                Padding="14,12"
-                                Background="{StaticResource SurfaceBrush}"
-                                BorderBrush="{StaticResource BorderBrush}"
-                                BorderThickness="1"
-                                CornerRadius="10">
-                            <StackPanel>
-                                <TextBlock FontWeight="SemiBold"
-                                           Text="초기화권이 실제로 사용될 수 있습니다." />
-                                <TextBlock Margin="0,5,0,0"
-                                           Style="{StaticResource CaptionTextStyle}"
-                                           Text="자동 초기화를 켜고 저장하면, 현재 주간 잔여량이 임계값 이하인 경우 초기화권 1개가 바로 사용될 수 있습니다. 실제 초기화 범위는 서버가 결정합니다." />
-                            </StackPanel>
-                        </Border>
-
-                        <Separator Margin="0,20"
-                                   Background="{StaticResource BorderBrush}" />
-
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="20" />
+                                <ColumnDefinition Width="1" />
+                                <ColumnDefinition Width="24" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
 
-                            <StackPanel Grid.Column="0">
+                            <StackPanel x:Name="SettingsAutomationPanel"
+                                        Grid.Column="0">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Margin="0,0,12,0">
+                                        <TextBlock FontSize="16"
+                                                   FontWeight="SemiBold"
+                                                   TextWrapping="Wrap"
+                                                   Text="Windows 로그인 시 자동 실행" />
+                                        <TextBlock Margin="0,4,0,0"
+                                                   Style="{StaticResource CaptionTextStyle}"
+                                                   Text="{Binding StartupStatusText}" />
+                                    </StackPanel>
+                                    <CheckBox x:Name="StartWithWindowsCheckBox"
+                                              Grid.Column="1"
+                                              VerticalAlignment="Center"
+                                              IsChecked="{Binding StartWithWindows}"
+                                              Style="{StaticResource ToggleSwitchStyle}"
+                                              KeyboardNavigation.TabIndex="0"
+                                              AutomationProperties.Name="Windows 로그인 시 자동 실행"
+                                              Click="OnStartWithWindowsClick" />
+                                </Grid>
+
+                                <Separator Margin="0,20"
+                                           Background="{StaticResource BorderBrush}" />
+
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Margin="0,0,12,0">
+                                        <TextBlock FontSize="16"
+                                                   FontWeight="SemiBold"
+                                                   TextWrapping="Wrap"
+                                                   Text="초기화권 자동 사용" />
+                                        <TextBlock Margin="0,4,0,0"
+                                                   Style="{StaticResource CaptionTextStyle}"
+                                                   Text="잔여량이 임계값 이하이면 초기화권을 자동으로 사용합니다." />
+                                    </StackPanel>
+                                    <CheckBox x:Name="AutomationToggle"
+                                              Grid.Column="1"
+                                              VerticalAlignment="Center"
+                                              IsChecked="{Binding AutomationEnabled}"
+                                              Style="{StaticResource ToggleSwitchStyle}"
+                                              KeyboardNavigation.TabIndex="1"
+                                              AutomationProperties.Name="초기화권 자동 사용"
+                                              AutomationProperties.HelpText="켜면 임계값 도달 시 초기화권을 사용할 수 있습니다."
+                                              Click="OnAutomationToggleClick" />
+                                </Grid>
+
+                                <Border Margin="0,16,0,0"
+                                        Padding="12,11"
+                                        Background="{StaticResource SurfaceBrush}"
+                                        BorderBrush="{StaticResource BorderBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="9">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding AutomationEnabled}"
+                                                             Value="True">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <StackPanel>
+                                        <TextBlock FontWeight="SemiBold"
+                                                   Text="초기화권이 실제로 사용될 수 있습니다." />
+                                        <TextBlock Margin="0,5,0,0"
+                                                   Style="{StaticResource CaptionTextStyle}"
+                                                   Text="주간 잔여량이 임계값 이하이면 초기화권 1개가 사용될 수 있습니다." />
+                                    </StackPanel>
+                                </Border>
+
+                                <Separator Margin="0,20"
+                                           Background="{StaticResource BorderBrush}" />
+
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Margin="0,0,12,0">
+                                        <TextBlock FontSize="16"
+                                                   FontWeight="SemiBold"
+                                                   TextWrapping="Wrap"
+                                                   Text="사용량 초기화 알림" />
+                                        <TextBlock Margin="0,4,0,0"
+                                                   Style="{StaticResource CaptionTextStyle}"
+                                                   Text="정기·이른 사용량 초기화와 앱의 초기화권 자동 사용을 감지하면 알려줍니다." />
+                                    </StackPanel>
+                                    <CheckBox x:Name="UsageResetNotificationToggle"
+                                              Grid.Column="1"
+                                              VerticalAlignment="Center"
+                                              IsChecked="{Binding NotifyOnUsageReset}"
+                                              Style="{StaticResource ToggleSwitchStyle}"
+                                              KeyboardNavigation.TabIndex="2"
+                                              AutomationProperties.Name="사용량 초기화 알림"
+                                              Click="OnUsageResetNotificationClick" />
+                                </Grid>
+                            </StackPanel>
+
+                            <Border Grid.Column="1"
+                                    Background="{StaticResource BorderBrush}" />
+
+                            <StackPanel x:Name="SettingsNumericPanel"
+                                        Grid.Column="3">
                                 <Label Padding="0"
                                        FontWeight="SemiBold"
                                        Target="{Binding ElementName=ThresholdInput}"
@@ -345,15 +502,20 @@
                                              Width="116"
                                              MaxLength="3"
                                              Text="{Binding ThresholdText, UpdateSourceTrigger=PropertyChanged}"
-                                             AutomationProperties.Name="주간 잔여량 임계값" />
+                                             KeyboardNavigation.TabIndex="3"
+                                             AutomationProperties.Name="주간 잔여량 임계값"
+                                             TextChanged="OnThresholdTextChanged"
+                                             LostKeyboardFocus="OnNumericInputLostKeyboardFocus"
+                                             KeyDown="OnNumericInputKeyDown" />
                                     <TextBlock Margin="10,0,0,0"
                                                VerticalAlignment="Center"
                                                FontWeight="SemiBold"
                                                Text="%" />
                                 </DockPanel>
-                            </StackPanel>
 
-                            <StackPanel Grid.Column="2">
+                                <Separator Margin="0,20"
+                                           Background="{StaticResource BorderBrush}" />
+
                                 <Label Padding="0"
                                        FontWeight="SemiBold"
                                        Target="{Binding ElementName=PollIntervalInput}"
@@ -366,7 +528,11 @@
                                              Width="116"
                                              MaxLength="2"
                                              Text="{Binding PollIntervalText, UpdateSourceTrigger=PropertyChanged}"
-                                             AutomationProperties.Name="사용량 확인 주기" />
+                                             KeyboardNavigation.TabIndex="4"
+                                             AutomationProperties.Name="사용량 확인 주기"
+                                             TextChanged="OnPollIntervalTextChanged"
+                                             LostKeyboardFocus="OnNumericInputLostKeyboardFocus"
+                                             KeyDown="OnNumericInputKeyDown" />
                                     <TextBlock Margin="10,0,0,0"
                                                VerticalAlignment="Center"
                                                FontWeight="SemiBold"
@@ -374,16 +540,6 @@
                                 </DockPanel>
                             </StackPanel>
                         </Grid>
-
-                        <Separator Margin="0,20"
-                                   Background="{StaticResource BorderBrush}" />
-
-                        <CheckBox IsChecked="{Binding StartWithWindows}"
-                                  AutomationProperties.Name="Windows 로그인 시 자동 실행"
-                                  Content="Windows 로그인 시 자동 실행" />
-                        <TextBlock Margin="22,5,0,0"
-                                   Style="{StaticResource CaptionTextStyle}"
-                                   Text="{Binding StartupStatusText}" />
                     </StackPanel>
                 </Border>
             </Grid>

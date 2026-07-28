@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Globalization;
 using System.IO;
 using System.Runtime.CompilerServices;
+using CodexAutoReset.AppServer;
 using CodexAutoReset.Core;
 using CodexAutoReset.Runtime;
 
@@ -20,17 +21,22 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private string pollIntervalText;
     private string? codexExecutablePath;
     private bool automationEnabled;
+    private bool notifyOnUsageReset;
     private bool startWithWindows;
     private string weeklyRemainingText = "—";
     private double weeklyRemainingPercent;
     private string weeklyResetStatus = "아직 확인하지 않았습니다.";
     private string creditStatus = "확인 전";
     private string lastCheckedStatus = "확인 전";
-    private string overallStatus = "사용량을 확인할 예정입니다.";
+    private string overallStatusTitle = string.Empty;
+    private string overallStatus = string.Empty;
+    private bool isCompatibilityWarning;
     private string saveStatus = string.Empty;
     private string codexConnectionStatus = string.Empty;
     private bool isCodexConnectionSaving;
+    private bool isRefreshing;
     private StartupStatus? actualStartupStatus;
+    private MonitorSnapshot currentSnapshot;
 
     public MainWindowViewModel(
         JsonSettingsStore settingsStore,
@@ -51,11 +57,13 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             CultureInfo.InvariantCulture);
         codexExecutablePath = initialSettings.CodexExecutablePath;
         automationEnabled = initialSettings.AutomationEnabled;
+        notifyOnUsageReset = initialSettings.NotifyOnUsageReset;
         startWithWindows = initialSettings.StartWithWindows;
+        currentSnapshot = monitor.CurrentSnapshot;
 
         TryRefreshStartupState();
         monitor.SnapshotChanged += OnSnapshotChanged;
-        ApplySnapshot(monitor.CurrentSnapshot);
+        ApplySnapshot(currentSnapshot);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -76,13 +84,18 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     public bool HasCustomCodexExecutablePath => codexExecutablePath is not null;
 
-    public string CodexExecutableModeText => HasCustomCodexExecutablePath
-        ? "연결 방식 · 직접 지정"
-        : "연결 방식 · 자동 찾기";
-
-    public string CodexExecutableDisplayText => codexExecutablePath is null
-        ? "Windows에 설치된 Codex를 자동으로 찾습니다."
-        : FormatExecutablePathForDisplay(codexExecutablePath);
+    public string CodexExecutableDisplayText
+    {
+        get
+        {
+            var resolvedPath = codexExecutablePath
+                ?? CodexExecutableLocator.TryGetFilePickerExecutablePath(
+                    configuredPath: null);
+            return resolvedPath is null
+                ? "Codex.exe 경로를 확인할 수 없습니다."
+                : FormatExecutablePathForDisplay(resolvedPath);
+        }
+    }
 
     public bool AutomationEnabled
     {
@@ -91,18 +104,19 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         {
             if (SetField(ref automationEnabled, value))
             {
-                OnPropertyChanged(nameof(AutomationStateText));
                 OnPropertyChanged(nameof(RequiresAutomationEnableConfirmation));
             }
         }
     }
 
-    public string AutomationStateText => AutomationEnabled
-        ? "자동 초기화 켜짐"
-        : "자동 초기화 꺼짐";
-
     public bool RequiresAutomationEnableConfirmation =>
         AutomationEnabled && !persistedSettings.AutomationEnabled;
+
+    public bool NotifyOnUsageReset
+    {
+        get => notifyOnUsageReset;
+        set => SetField(ref notifyOnUsageReset, value);
+    }
 
     public bool StartWithWindows
     {
@@ -157,7 +171,37 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     public string OverallStatus
     {
         get => overallStatus;
-        private set => SetField(ref overallStatus, value);
+        private set
+        {
+            if (SetField(ref overallStatus, value))
+            {
+                OnPropertyChanged(nameof(IsOverallStatusVisible));
+            }
+        }
+    }
+
+    public bool IsOverallStatusVisible =>
+        !string.IsNullOrWhiteSpace(OverallStatus);
+
+    public string OverallStatusTitle
+    {
+        get => overallStatusTitle;
+        private set
+        {
+            if (SetField(ref overallStatusTitle, value))
+            {
+                OnPropertyChanged(nameof(IsOverallStatusTitleVisible));
+            }
+        }
+    }
+
+    public bool IsOverallStatusTitleVisible =>
+        !string.IsNullOrWhiteSpace(OverallStatusTitle);
+
+    public bool IsCompatibilityWarning
+    {
+        get => isCompatibilityWarning;
+        private set => SetField(ref isCompatibilityWarning, value);
     }
 
     public string SaveStatus
@@ -174,9 +218,55 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     public bool CanEditCodexConnection => !isCodexConnectionSaving;
 
-    public MonitorSnapshot CurrentSnapshot => monitor.CurrentSnapshot;
+    public bool IsRefreshing
+    {
+        get => isRefreshing;
+        private set
+        {
+            if (SetField(ref isRefreshing, value))
+            {
+                OnPropertyChanged(nameof(CanRefresh));
+                OnPropertyChanged(nameof(IsRefreshAnimationActive));
+                OnPropertyChanged(nameof(RefreshAutomationName));
+                OnPropertyChanged(nameof(RefreshStatusText));
+            }
+        }
+    }
+
+    public bool CanRefresh => !IsRefreshing;
+
+    public bool IsRefreshAnimationActive =>
+        IsRefreshing && System.Windows.SystemParameters.ClientAreaAnimation;
+
+    public string RefreshAutomationName => IsRefreshing
+        ? "주간 사용량 새로고침 중"
+        : "주간 사용량 새로고침";
+
+    public string RefreshStatusText => IsRefreshing
+        ? "확인 중…"
+        : string.Empty;
+
+    public MonitorSnapshot CurrentSnapshot => currentSnapshot;
 
     public void RequestRefresh() => monitor.RequestRefresh();
+
+    public async Task RefreshNowAsync()
+    {
+        if (Volatile.Read(ref stopping) != 0 || IsRefreshing)
+        {
+            return;
+        }
+
+        IsRefreshing = true;
+        try
+        {
+            await monitor.RefreshAsync(CancellationToken.None);
+        }
+        finally
+        {
+            IsRefreshing = false;
+        }
+    }
 
     public bool TrySetCodexExecutablePath(string? path, out string errorMessage)
     {
@@ -218,6 +308,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     public void UseAutomaticCodexExecutablePath()
     {
         SetCodexExecutablePath(null);
+        OnPropertyChanged(nameof(CodexExecutableDisplayText));
         CodexConnectionStatus = "자동 찾기 설정을 저장하는 중입니다.";
     }
 
@@ -238,13 +329,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         var gateAcquired = false;
         try
         {
-            if (!await saveGate.WaitAsync(0))
-            {
-                RestorePersistedCodexExecutablePath();
-                CodexConnectionStatus = "다른 설정을 저장 중입니다. 잠시 후 다시 시도하세요.";
-                return false;
-            }
-
+            await saveGate.WaitAsync();
             gateAcquired = true;
             if (Volatile.Read(ref stopping) != 0)
             {
@@ -257,7 +342,6 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             {
                 var updatedSettings = await monitor.SetCodexExecutablePathAsync(
                     settingsUpdateService,
-                    baselineSettings,
                     codexExecutablePath,
                     CancellationToken.None);
                 MergeFreshPersistedSettings(baselineSettings, updatedSettings);
@@ -309,6 +393,309 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
     }
 
+    public async Task<bool> SetAutomationEnabledAsync(
+        bool enabled,
+        bool automationEnableConfirmed = false)
+    {
+        if (Volatile.Read(ref stopping) != 0)
+        {
+            return false;
+        }
+
+        if (enabled
+            && !persistedSettings.AutomationEnabled
+            && !automationEnableConfirmed)
+        {
+            AutomationEnabled = persistedSettings.AutomationEnabled;
+            SaveStatus = "초기화권 자동 사용을 켜려면 초기화권 사용 가능성을 확인해야 합니다.";
+            return false;
+        }
+
+        AutomationEnabled = enabled;
+        await saveGate.WaitAsync();
+        try
+        {
+            if (Volatile.Read(ref stopping) != 0)
+            {
+                AutomationEnabled = persistedSettings.AutomationEnabled;
+                return false;
+            }
+
+            var baselineSettings = persistedSettings;
+            try
+            {
+                var updatedSettings = await monitor.SetAutomationEnabledAsync(
+                    settingsUpdateService,
+                    enabled,
+                    CancellationToken.None);
+                MergeFreshPersistedSettings(baselineSettings, updatedSettings);
+                AutomationEnabled = updatedSettings.AutomationEnabled;
+                SaveStatus = enabled
+                    ? "초기화권 자동 사용을 켰습니다."
+                    : "초기화권 자동 사용을 껐습니다.";
+                return true;
+            }
+            catch (SettingsException exception)
+            {
+                SaveStatus = ToFriendlySettingsFailure(exception.ReasonCode);
+            }
+            catch (Exception exception) when (
+                exception is IOException
+                    or UnauthorizedAccessException
+                    or System.Security.SecurityException)
+            {
+                SaveStatus = "초기화권 자동 사용 설정을 안전하게 적용하지 못했습니다.";
+            }
+            catch (Exception)
+            {
+                SaveStatus = "예상하지 못한 로컬 오류로 초기화권 자동 사용 설정을 적용하지 않았습니다.";
+            }
+
+            AutomationEnabled = persistedSettings.AutomationEnabled;
+            return false;
+        }
+        finally
+        {
+            saveGate.Release();
+        }
+    }
+
+    public async Task<bool> SetNotifyOnUsageResetAsync(bool enabled)
+    {
+        if (Volatile.Read(ref stopping) != 0)
+        {
+            return false;
+        }
+
+        NotifyOnUsageReset = enabled;
+        await saveGate.WaitAsync();
+        try
+        {
+            if (Volatile.Read(ref stopping) != 0)
+            {
+                NotifyOnUsageReset = persistedSettings.NotifyOnUsageReset;
+                return false;
+            }
+
+            var baselineSettings = persistedSettings;
+            try
+            {
+                var updatedSettings = await monitor.SetNotifyOnUsageResetAsync(
+                    settingsUpdateService,
+                    enabled,
+                    CancellationToken.None);
+                MergeFreshPersistedSettings(baselineSettings, updatedSettings);
+                NotifyOnUsageReset = updatedSettings.NotifyOnUsageReset;
+                SaveStatus = enabled
+                    ? "사용량 초기화 알림을 켰습니다."
+                    : "사용량 초기화 알림을 껐습니다.";
+                return true;
+            }
+            catch (SettingsException exception)
+            {
+                SaveStatus = ToFriendlySettingsFailure(exception.ReasonCode);
+            }
+            catch (Exception exception) when (
+                exception is IOException
+                    or UnauthorizedAccessException
+                    or System.Security.SecurityException)
+            {
+                SaveStatus = "사용량 초기화 알림 설정을 안전하게 적용하지 못했습니다.";
+            }
+            catch (Exception)
+            {
+                SaveStatus = "예상하지 못한 로컬 오류로 사용량 초기화 알림 설정을 적용하지 않았습니다.";
+            }
+
+            NotifyOnUsageReset = persistedSettings.NotifyOnUsageReset;
+            return false;
+        }
+        finally
+        {
+            saveGate.Release();
+        }
+    }
+
+    public bool RequiresThresholdChangeConfirmation()
+    {
+        return int.TryParse(
+                ThresholdText,
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out var threshold)
+            && threshold is >= 1 and <= 100
+            && IsPotentialImmediateResetThreshold(
+                threshold,
+                AutomationEnabled);
+    }
+
+    public void CancelThresholdChange()
+    {
+        ThresholdText = persistedSettings.RemainingThresholdPercent.ToString(
+            CultureInfo.InvariantCulture);
+        SaveStatus = "잔여량 임계값을 변경하지 않았습니다.";
+    }
+
+    public async Task<bool> SaveThresholdAsync(
+        bool immediateResetRiskConfirmed = false)
+    {
+        var requestedText = ThresholdText;
+        if (!int.TryParse(
+                requestedText,
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out var threshold)
+            || threshold is < 1 or > 100)
+        {
+            SaveStatus = "잔여량 임계값은 1~100%의 정수로 입력하세요.";
+            return false;
+        }
+
+        if (Volatile.Read(ref stopping) != 0)
+        {
+            return false;
+        }
+
+        await saveGate.WaitAsync();
+        try
+        {
+            if (Volatile.Read(ref stopping) != 0)
+            {
+                return false;
+            }
+
+            if (threshold == persistedSettings.RemainingThresholdPercent)
+            {
+                return true;
+            }
+
+            if (IsPotentialImmediateResetThreshold(
+                    threshold,
+                    persistedSettings.AutomationEnabled)
+                && !immediateResetRiskConfirmed)
+            {
+                SaveStatus = "이 임계값을 적용하면 초기화권이 바로 사용될 수 있어 확인이 필요합니다.";
+                RestoreNumericTextAfterFailedSave(
+                    requestedText,
+                    isThreshold: true);
+                return false;
+            }
+
+            var baselineSettings = persistedSettings;
+            try
+            {
+                var updatedSettings =
+                    await monitor.SetRemainingThresholdPercentAsync(
+                        settingsUpdateService,
+                        threshold,
+                        CancellationToken.None);
+                MergeFreshPersistedSettings(
+                    baselineSettings,
+                    updatedSettings,
+                    expectedThresholdText: requestedText);
+                SaveStatus = $"잔여량 임계값을 {threshold}%로 적용했습니다.";
+                return true;
+            }
+            catch (SettingsException exception)
+            {
+                SaveStatus = ToFriendlySettingsFailure(exception.ReasonCode);
+            }
+            catch (Exception exception) when (
+                exception is IOException
+                    or UnauthorizedAccessException
+                    or System.Security.SecurityException)
+            {
+                SaveStatus = "잔여량 임계값을 안전하게 적용하지 못했습니다.";
+            }
+            catch (Exception)
+            {
+                SaveStatus = "예상하지 못한 로컬 오류로 잔여량 임계값을 적용하지 않았습니다.";
+            }
+
+            RestoreNumericTextAfterFailedSave(
+                requestedText,
+                isThreshold: true);
+            return false;
+        }
+        finally
+        {
+            saveGate.Release();
+        }
+    }
+
+    public async Task<bool> SavePollIntervalAsync()
+    {
+        var requestedText = PollIntervalText;
+        if (!int.TryParse(
+                requestedText,
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out var pollInterval)
+            || pollInterval is < 1 or > 60)
+        {
+            SaveStatus = "확인 주기는 1~60분의 정수로 입력하세요.";
+            return false;
+        }
+
+        if (Volatile.Read(ref stopping) != 0)
+        {
+            return false;
+        }
+
+        await saveGate.WaitAsync();
+        try
+        {
+            if (Volatile.Read(ref stopping) != 0)
+            {
+                return false;
+            }
+
+            if (pollInterval == persistedSettings.PollIntervalMinutes)
+            {
+                return true;
+            }
+
+            var baselineSettings = persistedSettings;
+            try
+            {
+                var updatedSettings = await monitor.SetPollIntervalMinutesAsync(
+                    settingsUpdateService,
+                    pollInterval,
+                    CancellationToken.None);
+                MergeFreshPersistedSettings(
+                    baselineSettings,
+                    updatedSettings,
+                    expectedPollIntervalText: requestedText);
+                SaveStatus = $"확인 주기를 {pollInterval}분으로 적용했습니다.";
+                return true;
+            }
+            catch (SettingsException exception)
+            {
+                SaveStatus = ToFriendlySettingsFailure(exception.ReasonCode);
+            }
+            catch (Exception exception) when (
+                exception is IOException
+                    or UnauthorizedAccessException
+                    or System.Security.SecurityException)
+            {
+                SaveStatus = "확인 주기를 안전하게 적용하지 못했습니다.";
+            }
+            catch (Exception)
+            {
+                SaveStatus = "예상하지 못한 로컬 오류로 확인 주기를 적용하지 않았습니다.";
+            }
+
+            RestoreNumericTextAfterFailedSave(
+                requestedText,
+                isThreshold: false);
+            return false;
+        }
+        finally
+        {
+            saveGate.Release();
+        }
+    }
+
     public async Task SaveAsync(bool automationEnableConfirmed = false)
     {
         if (Volatile.Read(ref stopping) != 0)
@@ -331,7 +718,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             SaveStatus = string.Empty;
             if (RequiresAutomationEnableConfirmation && !automationEnableConfirmed)
             {
-                SaveStatus = "자동 초기화를 켜려면 초기화권 사용 가능성을 확인해야 합니다.";
+                SaveStatus = "초기화권 자동 사용을 켜려면 초기화권 사용 가능성을 확인해야 합니다.";
                 return;
             }
 
@@ -357,6 +744,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                 StartWithWindows = StartWithWindows,
                 CodexExecutablePath = codexExecutablePath,
                 AutomationEnabled = AutomationEnabled,
+                NotifyOnUsageReset = NotifyOnUsageReset,
             };
 
             try
@@ -428,12 +816,12 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     public async Task SetStartWithWindowsAsync(bool enabled)
     {
-        if (Volatile.Read(ref stopping) != 0
-            || !await saveGate.WaitAsync(0))
+        if (Volatile.Read(ref stopping) != 0)
         {
             return;
         }
 
+        await saveGate.WaitAsync();
         try
         {
             if (Volatile.Read(ref stopping) != 0)
@@ -507,13 +895,20 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     {
         Interlocked.Exchange(ref stopping, 1);
         await saveGate.WaitAsync();
-        saveGate.Release();
+        try
+        {
+            await TryPersistPendingNumericSettingsOnShutdownAsync();
+        }
+        finally
+        {
+            saveGate.Release();
+        }
     }
 
     public void CancelAutomationEnable()
     {
         AutomationEnabled = persistedSettings.AutomationEnabled;
-        SaveStatus = "자동 초기화를 켜지 않았습니다.";
+        SaveStatus = "초기화권 자동 사용을 켜지 않았습니다.";
     }
 
     private void OnSnapshotChanged(object? sender, MonitorSnapshot snapshot)
@@ -530,19 +925,23 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     private void ApplySnapshot(MonitorSnapshot snapshot)
     {
+        currentSnapshot = snapshot;
         WeeklyRemainingText = snapshot.Weekly is null
             ? "—"
-            : $"{snapshot.Weekly.RemainingPercent:F1}%";
+            : $"{snapshot.Weekly.RemainingPercent:F0}%";
         WeeklyRemainingPercent = snapshot.Weekly is null
             ? 0
             : Math.Clamp(snapshot.Weekly.RemainingPercent, 0, 100);
         WeeklyResetStatus = FormatReset(snapshot.Weekly);
         CreditStatus = snapshot.AvailableCreditCount?.ToString(
             CultureInfo.InvariantCulture) ?? "알 수 없음";
-        LastCheckedStatus = snapshot.StatusCode == "waiting"
-            ? "확인 전"
-            : snapshot.ObservedAt.ToLocalTime().ToString("g", CultureInfo.CurrentCulture);
+        LastCheckedStatus = snapshot.LastSuccessfulObservationAt is { } lastSuccess
+            ? lastSuccess.ToLocalTime().ToString("g", CultureInfo.CurrentCulture)
+            : "확인 전";
 
+        IsCompatibilityWarning = IsCompatibilityWarningState(
+            snapshot.CompatibilityState);
+        OverallStatusTitle = FormatOverallStatusTitle(snapshot);
         OverallStatus = FormatOverallStatus(snapshot);
         OnPropertyChanged(nameof(CurrentSnapshot));
     }
@@ -556,6 +955,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             CultureInfo.InvariantCulture);
         SetCodexExecutablePath(settings.CodexExecutablePath);
         AutomationEnabled = settings.AutomationEnabled;
+        NotifyOnUsageReset = settings.NotifyOnUsageReset;
         OnPropertyChanged(nameof(RequiresAutomationEnableConfirmation));
         TryRefreshStartupState();
         monitor.RequestRefresh();
@@ -563,6 +963,68 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     private void RestorePersistedCodexExecutablePath() =>
         SetCodexExecutablePath(persistedSettings.CodexExecutablePath);
+
+    private async Task TryPersistPendingNumericSettingsOnShutdownAsync()
+    {
+        try
+        {
+            if (int.TryParse(
+                    ThresholdText,
+                    NumberStyles.None,
+                    CultureInfo.InvariantCulture,
+                    out var threshold)
+                && threshold is >= 1 and <= 100
+                && threshold != persistedSettings.RemainingThresholdPercent)
+            {
+                persistedSettings =
+                    await monitor.SetRemainingThresholdPercentAsync(
+                        settingsUpdateService,
+                        threshold,
+                        CancellationToken.None);
+            }
+
+            if (int.TryParse(
+                    PollIntervalText,
+                    NumberStyles.None,
+                    CultureInfo.InvariantCulture,
+                    out var pollInterval)
+                && pollInterval is >= 1 and <= 60
+                && pollInterval != persistedSettings.PollIntervalMinutes)
+            {
+                persistedSettings = await monitor.SetPollIntervalMinutesAsync(
+                    settingsUpdateService,
+                    pollInterval,
+                    CancellationToken.None);
+            }
+        }
+        catch (Exception exception) when (exception is not (
+            OutOfMemoryException or StackOverflowException or AccessViolationException))
+        {
+            // Shutdown must not be blocked by a best-effort final settings flush.
+        }
+    }
+
+    private void RestoreNumericTextAfterFailedSave(
+        string requestedText,
+        bool isThreshold)
+    {
+        if (isThreshold)
+        {
+            if (string.Equals(ThresholdText, requestedText, StringComparison.Ordinal))
+            {
+                ThresholdText = persistedSettings.RemainingThresholdPercent.ToString(
+                    CultureInfo.InvariantCulture);
+            }
+
+            return;
+        }
+
+        if (string.Equals(PollIntervalText, requestedText, StringComparison.Ordinal))
+        {
+            PollIntervalText = persistedSettings.PollIntervalMinutes.ToString(
+                CultureInfo.InvariantCulture);
+        }
+    }
 
     private void SetCodexConnectionSaving(bool value)
     {
@@ -572,22 +1034,41 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
     }
 
+    private bool IsPotentialImmediateResetThreshold(
+        int requestedThreshold,
+        bool automationWillBeEnabled)
+    {
+        var weeklyRemaining = CurrentSnapshot.Weekly?.RemainingPercent;
+        return automationWillBeEnabled
+            && CurrentSnapshot.AvailableCreditCount is > 0
+            && requestedThreshold > persistedSettings.RemainingThresholdPercent
+            && weeklyRemaining is not null
+            && persistedSettings.RemainingThresholdPercent < weeklyRemaining.Value
+            && requestedThreshold >= weeklyRemaining.Value;
+    }
+
     private void MergeFreshPersistedSettings(
         GuardSettings baselineSettings,
-        GuardSettings freshSettings)
+        GuardSettings freshSettings,
+        string? expectedThresholdText = null,
+        string? expectedPollIntervalText = null)
     {
         var thresholdWasUnedited = string.Equals(
             ThresholdText,
-            baselineSettings.RemainingThresholdPercent.ToString(
-                CultureInfo.InvariantCulture),
+            expectedThresholdText
+                ?? baselineSettings.RemainingThresholdPercent.ToString(
+                    CultureInfo.InvariantCulture),
             StringComparison.Ordinal);
         var pollIntervalWasUnedited = string.Equals(
             PollIntervalText,
-            baselineSettings.PollIntervalMinutes.ToString(
-                CultureInfo.InvariantCulture),
+            expectedPollIntervalText
+                ?? baselineSettings.PollIntervalMinutes.ToString(
+                    CultureInfo.InvariantCulture),
             StringComparison.Ordinal);
         var automationWasUnedited =
             AutomationEnabled == baselineSettings.AutomationEnabled;
+        var notificationWasUnedited =
+            NotifyOnUsageReset == baselineSettings.NotifyOnUsageReset;
         var codexExecutableWasUnedited = string.Equals(
             codexExecutablePath,
             baselineSettings.CodexExecutablePath,
@@ -609,6 +1090,11 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         if (automationWasUnedited)
         {
             AutomationEnabled = freshSettings.AutomationEnabled;
+        }
+
+        if (notificationWasUnedited)
+        {
+            NotifyOnUsageReset = freshSettings.NotifyOnUsageReset;
         }
 
         if (codexExecutableWasUnedited)
@@ -670,6 +1156,21 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     private static string FormatOverallStatus(MonitorSnapshot snapshot)
     {
+        var compatibilityStatus = snapshot.CompatibilityState switch
+        {
+            CodexCompatibilityState.VerificationPending =>
+                "Codex 응답을 다시 확인하고 있습니다. 안전을 위해 이번 자동 초기화는 실행하지 않습니다.",
+            CodexCompatibilityState.ReadUnsupported =>
+                "Codex 응답을 이 버전의 CodexAutoReset이 안전하게 해석할 수 없습니다. 주간 사용량 확인과 초기화권 자동 사용을 중단했습니다. CodexAutoReset 업데이트를 확인해 주세요.",
+            CodexCompatibilityState.MutationUnverified =>
+                "주간 사용량은 정상적으로 확인되지만, 현재 Codex 버전의 초기화권 처리 형식은 검증되지 않았습니다. 안전을 위해 초기화권 자동 사용을 중단했습니다. CodexAutoReset 업데이트를 확인해 주세요.",
+            _ => null,
+        };
+        if (compatibilityStatus is not null)
+        {
+            return compatibilityStatus;
+        }
+
         if (snapshot.ActionKind == CycleActionKind.ResetPending)
         {
             return snapshot.IsFailure
@@ -682,7 +1183,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             return snapshot.StatusCode switch
             {
                 "executable_not_found" =>
-                    "Codex CLI를 찾지 못했습니다. CLI 설치를 확인하거나 Codex 연결에서 codex.exe를 선택하세요.",
+                    "Codex CLI를 찾지 못했습니다. CLI 설치를 확인하거나 Codex 연결에서 Codex.exe 직접 찾기를 사용하세요.",
                 "executable_became_unavailable" =>
                     "Codex가 업데이트되어 실행 경로가 바뀐 것 같습니다. 잠시 후 다시 확인하세요.",
                 "start_failed" =>
@@ -701,19 +1202,28 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             return "초기화권 요청을 마쳤지만 초기화할 사용량이 없거나 사용할 수 있는 초기화권이 없었습니다.";
         }
 
-        if (!snapshot.Settings.AutomationEnabled)
-        {
-            return "사용량만 확인 중 · 자동 초기화 꺼짐";
-        }
-
         return snapshot.StatusCode switch
         {
-            "waiting" => "사용량을 확인할 예정입니다.",
-            "no_action" => $"자동 초기화 켜짐 · 주간 잔여량 {snapshot.Settings.RemainingThresholdPercent}% 이하 감시 · 현재 초기화 조건이 아닙니다.",
             "duplicate_suppressed" => "이 주간 사용량 구간은 이미 처리했습니다.",
-            _ => "자동 초기화 켜짐 · 사용량 상태를 확인했습니다.",
+            _ => string.Empty,
         };
     }
+
+    private static string FormatOverallStatusTitle(MonitorSnapshot snapshot) =>
+        snapshot.CompatibilityState switch
+        {
+            CodexCompatibilityState.ReadUnsupported =>
+                "현재 Codex 응답을 지원하지 않습니다",
+            CodexCompatibilityState.MutationUnverified =>
+                "자동 초기화 호환성 확인 필요",
+            _ => string.Empty,
+        };
+
+    private static bool IsCompatibilityWarningState(
+        CodexCompatibilityState state) => state is
+            CodexCompatibilityState.VerificationPending
+            or CodexCompatibilityState.ReadUnsupported
+            or CodexCompatibilityState.MutationUnverified;
 
     private static string ToFriendlySettingsFailure(string code) => code switch
     {
@@ -738,7 +1248,6 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
 
         OnPropertyChanged(nameof(HasCustomCodexExecutablePath));
-        OnPropertyChanged(nameof(CodexExecutableModeText));
         OnPropertyChanged(nameof(CodexExecutableDisplayText));
     }
 

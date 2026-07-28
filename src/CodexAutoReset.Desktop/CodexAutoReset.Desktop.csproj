@@ -5,6 +5,7 @@
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
+    <EnableUnsafeBinaryFormatterSerialization>false</EnableUnsafeBinaryFormatterSerialization>
     <AssemblyName>CodexAutoReset</AssemblyName>
     <RootNamespace>CodexAutoReset.Desktop</RootNamespace>
     <ApplicationIcon>Assets\CodexAutoReset.ico</ApplicationIcon>
@@ -15,6 +16,7 @@
   </ItemGroup>
   <ItemGroup>
     <Resource Include="Assets\CodexAutoReset.ico" />
+    <Resource Include="Assets\CodexAutoResetWordmark.png" />
   </ItemGroup>
   <ItemGroup>
     <None Include="..\..\LICENSE"

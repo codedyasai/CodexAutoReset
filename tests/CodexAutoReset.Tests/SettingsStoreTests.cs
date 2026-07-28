@@ -48,8 +48,22 @@ public sealed class SettingsStoreTests
         }
         """;
 
+    private const string ValidV4SettingsJson =
+        """
+        {
+          "schemaVersion": 4,
+          "remainingThresholdPercent": 7,
+          "pollIntervalMinutes": 5,
+          "uiLanguage": "auto",
+          "startWithWindows": false,
+          "codexExecutablePath": null,
+          "automationEnabled": false,
+          "notifyOnUsageReset": true
+        }
+        """;
+
     [TestMethod]
-    public async Task MissingSettingsCreateVersionThreeDisabledDefaults()
+    public async Task MissingSettingsCreateVersionFourDefaults()
     {
         using var directory = TemporaryDirectory.Create();
         var path = Path.Combine(directory.Path, "settings.json");
@@ -59,9 +73,11 @@ public sealed class SettingsStoreTests
 
         Assert.AreEqual(GuardSettings.Default, settings);
         Assert.IsFalse(settings.AutomationEnabled);
+        Assert.IsTrue(settings.NotifyOnUsageReset);
         var json = await File.ReadAllTextAsync(path, Encoding.UTF8);
-        StringAssert.Contains(json, "\"schemaVersion\": 3");
+        StringAssert.Contains(json, "\"schemaVersion\": 4");
         StringAssert.Contains(json, "\"automationEnabled\": false");
+        StringAssert.Contains(json, "\"notifyOnUsageReset\": true");
         Assert.IsFalse(json.Contains("triggerLimit", StringComparison.Ordinal));
         Assert.IsFalse(json.Contains("executionMode", StringComparison.Ordinal));
         Assert.AreEqual(settings, await store.LoadAsync(CancellationToken.None));
@@ -100,21 +116,34 @@ public sealed class SettingsStoreTests
     }
 
     [TestMethod]
-    public async Task VersionThreeAutomationEnabledRoundTripsWithoutLegacyFields()
+    public async Task VersionFourSettingsRoundTripWithoutLegacyFields()
     {
         using var directory = TemporaryDirectory.Create();
         var path = Path.Combine(directory.Path, "settings.json");
         var store = new JsonSettingsStore(path);
-        var enabled = GuardSettings.Default with { AutomationEnabled = true };
+        var enabled = GuardSettings.Default with
+        {
+            AutomationEnabled = true,
+            NotifyOnUsageReset = false,
+        };
 
         await store.SaveAsync(enabled, CancellationToken.None);
 
         var json = await File.ReadAllTextAsync(path, Encoding.UTF8);
-        StringAssert.Contains(json, "\"schemaVersion\": 3");
+        StringAssert.Contains(json, "\"schemaVersion\": 4");
         StringAssert.Contains(json, "\"automationEnabled\": true");
+        StringAssert.Contains(json, "\"notifyOnUsageReset\": false");
         Assert.IsFalse(json.Contains("triggerLimit", StringComparison.Ordinal));
         Assert.IsFalse(json.Contains("executionMode", StringComparison.Ordinal));
         Assert.AreEqual(enabled, await store.LoadAsync(CancellationToken.None));
+    }
+
+    [TestMethod]
+    public async Task VersionThreeMigratesUsageResetNotificationsEnabled()
+    {
+        var settings = await LoadSettingsAsync(ValidV3SettingsJson);
+
+        Assert.IsTrue(settings.NotifyOnUsageReset);
     }
 
     [DataTestMethod]
@@ -201,6 +230,25 @@ public sealed class SettingsStoreTests
     public async Task MissingVersionThreeFieldFailsClosed(string propertyName)
     {
         var document = JsonNode.Parse(ValidV3SettingsJson)!.AsObject();
+        Assert.IsTrue(document.Remove(propertyName));
+
+        var exception = await LoadInvalidSettingsAsync(document.ToJsonString());
+
+        Assert.AreEqual("settings_invalid_json", exception.ReasonCode);
+    }
+
+    [DataTestMethod]
+    [DataRow("schemaVersion")]
+    [DataRow("remainingThresholdPercent")]
+    [DataRow("pollIntervalMinutes")]
+    [DataRow("uiLanguage")]
+    [DataRow("startWithWindows")]
+    [DataRow("codexExecutablePath")]
+    [DataRow("automationEnabled")]
+    [DataRow("notifyOnUsageReset")]
+    public async Task MissingVersionFourFieldFailsClosed(string propertyName)
+    {
+        var document = JsonNode.Parse(ValidV4SettingsJson)!.AsObject();
         Assert.IsTrue(document.Remove(propertyName));
 
         var exception = await LoadInvalidSettingsAsync(document.ToJsonString());

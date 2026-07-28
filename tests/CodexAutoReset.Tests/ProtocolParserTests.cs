@@ -74,6 +74,23 @@ public sealed class ProtocolParserTests
     }
 
     [TestMethod]
+    public void RateLimitsExposeConsumeSchemaCompatibility()
+    {
+        using var document = JsonDocument.Parse("{\"rateLimits\":{}}");
+
+        var compatibleByDefault = AppServerProtocolParser.ParseRateLimits(
+            document.RootElement,
+            DateTimeOffset.UtcNow);
+        var incompatible = AppServerProtocolParser.ParseRateLimits(
+            document.RootElement,
+            DateTimeOffset.UtcNow,
+            consumeSchemaCompatible: false);
+
+        Assert.IsTrue(compatibleByDefault.ConsumeSchemaCompatible);
+        Assert.IsFalse(incompatible.ConsumeSchemaCompatible);
+    }
+
+    [TestMethod]
     public void StableUnusedSnapshotFieldsAreValidatedAndAccepted()
     {
         using var document = JsonDocument.Parse(

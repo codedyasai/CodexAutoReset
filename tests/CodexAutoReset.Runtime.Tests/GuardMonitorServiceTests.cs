@@ -170,6 +170,49 @@ public sealed class GuardMonitorServiceTests
     }
 
     [TestMethod]
+    public async Task NotificationSettingChangeClearsTransientResetWithoutRefresh()
+    {
+        var root = CreateTemporaryDirectory();
+        var paths = RuntimePaths.ForTesting(root);
+        try
+        {
+            var settingsStore = new JsonSettingsStore(paths.SettingsFile);
+            await settingsStore.SaveAsync(
+                GuardSettings.Default,
+                CancellationToken.None);
+            var detection = new WeeklyUsageResetDetection(
+                WeeklyUsageResetKind.Early,
+                DateTimeOffset.UtcNow.AddDays(7).ToUnixTimeSeconds(),
+                DateTimeOffset.UtcNow);
+            var executor = new FakeCycleExecutor(detection);
+            await using var monitor = new GuardMonitorService(
+                settingsStore,
+                executor,
+                GuardSettings.Default);
+            var updateService = new SettingsUpdateService(
+                settingsStore,
+                new StartupService(new EmptyRegistryStore()));
+            await monitor.RefreshAsync();
+
+            Assert.AreEqual(detection, monitor.CurrentSnapshot.UsageResetDetection);
+
+            await monitor.SetNotifyOnUsageResetAsync(
+                updateService,
+                enabled: false,
+                CancellationToken.None);
+
+            Assert.AreEqual(1, executor.CallCount);
+            Assert.IsNull(monitor.CurrentSnapshot.UsageResetDetection);
+            Assert.AreEqual("no_action", monitor.CurrentSnapshot.StatusCode);
+            Assert.IsFalse(monitor.CurrentSnapshot.Settings.NotifyOnUsageReset);
+        }
+        finally
+        {
+            DeleteTemporaryDirectory(root);
+        }
+    }
+
+    [TestMethod]
     public async Task SaveSettingsAsync_DisabledPartialStartupFailureAppliesFailClosedSettings()
     {
         var root = CreateTemporaryDirectory();
@@ -290,6 +333,14 @@ public sealed class GuardMonitorServiceTests
 
     private sealed class FakeCycleExecutor : IGuardCycleExecutor
     {
+        private readonly WeeklyUsageResetDetection? usageResetDetection;
+
+        public FakeCycleExecutor(
+            WeeklyUsageResetDetection? usageResetDetection = null)
+        {
+            this.usageResetDetection = usageResetDetection;
+        }
+
         public int CallCount { get; private set; }
 
         public Task<GuardCycleResult> ExecuteAsync(
@@ -316,7 +367,8 @@ public sealed class GuardMonitorServiceTests
                 snapshot,
                 evaluation,
                 CycleActionKind.None,
-                "no_action"));
+                "no_action",
+                UsageResetDetection: usageResetDetection));
         }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;

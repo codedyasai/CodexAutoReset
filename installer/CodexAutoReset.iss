@@ -4,7 +4,7 @@
 #define LegacyAppExecutable "CodexResetGuard.exe"
 
 #ifndef AppVersion
-  #define AppVersion "0.2.2"
+  #define AppVersion "0.2.7"
 #endif
 
 #ifndef PublishDir
@@ -13,6 +13,7 @@
 
 [Setup]
 AppId={{8D5D7C2C-6DE7-4B57-A788-4D8E4680B43B}
+AppMutex=Local\CodexAutoReset-8D5D7C2C-6DE7-4B57-A788-4D8E4680B43B
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
@@ -48,6 +49,16 @@ VersionInfoCopyright=Apache-2.0
 Name: "korean"; MessagesFile: "compiler:Languages\Korean.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
+[CustomMessages]
+korean.DeleteUserDataPrompt=설정과 안전 기록도 함께 삭제하시겠습니까?%n%n'아니요'를 선택하면 재설치할 때 기존 설정과 중복 사용 방지 기록을 이어서 사용합니다.%n'예'를 선택하면 이 데이터는 복구할 수 없고, 재설치해도 이전 초기화권 처리 기록이 이어지지 않습니다.
+korean.DeleteUserDataFailed=설정과 안전 기록을 완전히 삭제하지 못했습니다.%n%n남은 폴더: %1%n%n앱 제거는 완료되었지만 이 폴더는 직접 삭제해야 합니다.
+korean.DeleteUserDataPathRejected=안전 확인에 실패하여 설정과 안전 기록을 삭제하지 않았습니다.%n%n확인할 폴더: %1
+korean.DeleteRegistryDataFailed=앱이 소유한 일부 레지스트리 정보를 삭제하지 못했습니다.%n%n앱 제거는 완료되었지만 완전 삭제를 위해 레지스트리를 직접 확인해야 합니다.
+english.DeleteUserDataPrompt=Also delete settings and safety records?%n%nChoose No to keep your settings and duplicate-use protection for a future reinstall.%nChoose Yes to delete this data permanently; a reinstall will not retain earlier reset-credit handling records.
+english.DeleteUserDataFailed=Settings and safety records could not be completely deleted.%n%nRemaining folder: %1%n%nThe app was removed, but you must delete this folder manually.
+english.DeleteUserDataPathRejected=Settings and safety records were not deleted because the data folder failed the safety check.%n%nFolder to review: %1
+english.DeleteRegistryDataFailed=Some app-owned registry data could not be deleted.%n%nThe app was removed, but the registry must be reviewed manually for a complete removal.
+
 [Tasks]
 Name: "desktopicon"; Description: "바탕 화면 바로가기 만들기"; GroupDescription: "추가 작업:"; Flags: unchecked
 
@@ -75,6 +86,9 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExecutable}"; Tasks: des
 Filename: "{app}\{#AppExecutable}"; Description: "{#AppName} 실행"; Flags: nowait postinstall skipifsilent
 
 [Code]
+var
+  DeleteUserDataOnUninstall: Boolean;
+
 function IsHexDigit(Value: Char): Boolean;
 begin
   Result := ((Value >= '0') and (Value <= '9'))
@@ -353,6 +367,147 @@ begin
     'OwnerId');
 end;
 
+function GetUserDataDirectory: String;
+begin
+  Result := PathCombine(
+    RemoveBackslashUnlessRoot(ExpandConstant('{localappdata}')),
+    '{#LegacyAppName}');
+end;
+
+function IsExpectedUserDataDirectory(Path: String): Boolean;
+var
+  LocalAppData: String;
+  ExpectedPath: String;
+begin
+  LocalAppData :=
+    RemoveBackslashUnlessRoot(ExpandConstant('{localappdata}'));
+  ExpectedPath := PathCombine(LocalAppData, '{#LegacyAppName}');
+  Path := RemoveBackslashUnlessRoot(Path);
+
+  Result := (LocalAppData <> '')
+    and PathIsRooted(LocalAppData)
+    and PathSame(Path, ExpectedPath)
+    and not PathSame(Path, LocalAppData)
+    and PathStartsWith(Path, AddBackslash(LocalAppData), True);
+end;
+
+function AskToDeleteUserData: Boolean;
+begin
+  Result := False;
+  if UninstallSilent then
+  begin
+    Log('Silent uninstall: preserving CodexAutoReset user data.');
+    Exit;
+  end;
+
+  Result := SuppressibleMsgBox(
+    CustomMessage('DeleteUserDataPrompt'),
+    mbConfirmation,
+    MB_YESNO or MB_DEFBUTTON2,
+    IDNO) = IDYES;
+end;
+
+procedure DeleteUserDataIfRequested;
+var
+  UserDataDirectory: String;
+  Deleted: Boolean;
+begin
+  if not DeleteUserDataOnUninstall then
+  begin
+    Exit;
+  end;
+
+  UserDataDirectory := GetUserDataDirectory;
+  if not IsExpectedUserDataDirectory(UserDataDirectory) then
+  begin
+    Log('Refusing to delete unexpected user data path: '
+      + UserDataDirectory);
+    SuppressibleMsgBox(
+      FmtMessage(CustomMessage('DeleteUserDataPathRejected'), [UserDataDirectory]),
+      mbError,
+      MB_OK,
+      IDOK);
+    Exit;
+  end;
+
+  if DirExists(UserDataDirectory) then
+  begin
+    Deleted := DelTree(UserDataDirectory, True, True, True);
+  end
+  else if FileExists(UserDataDirectory) then
+  begin
+    Deleted := DeleteFile(UserDataDirectory);
+  end
+  else
+  begin
+    Deleted := True;
+  end;
+
+  if Deleted then
+  begin
+    Log('Deleted CodexAutoReset user data.');
+  end
+  else
+  begin
+    Log('Could not completely delete CodexAutoReset user data: '
+      + UserDataDirectory);
+    SuppressibleMsgBox(
+      FmtMessage(CustomMessage('DeleteUserDataFailed'), [UserDataDirectory]),
+      mbError,
+      MB_OK,
+      IDOK);
+  end;
+end;
+
+procedure RemoveOwnedRegistryKeys;
+var
+  CurrentDeleted: Boolean;
+  LegacyDeleted: Boolean;
+begin
+  if DeleteUserDataOnUninstall then
+  begin
+    CurrentDeleted := True;
+    if RegKeyExists(HKCU, 'Software\{#AppName}') then
+    begin
+      CurrentDeleted := RegDeleteKeyIncludingSubkeys(
+        HKCU,
+        'Software\{#AppName}');
+    end;
+
+    LegacyDeleted := True;
+    if RegKeyExists(HKCU, 'Software\{#LegacyAppName}') then
+    begin
+      LegacyDeleted := RegDeleteKeyIncludingSubkeys(
+        HKCU,
+        'Software\{#LegacyAppName}');
+    end;
+
+    if (not CurrentDeleted) or (not LegacyDeleted) then
+    begin
+      Log('Could not completely delete CodexAutoReset registry data.');
+      SuppressibleMsgBox(
+        CustomMessage('DeleteRegistryDataFailed'),
+        mbError,
+        MB_OK,
+        IDOK);
+    end;
+    Exit;
+  end;
+
+  RegDeleteKeyIfEmpty(
+    HKCU,
+    'Software\{#AppName}\Startup');
+  RegDeleteKeyIfEmpty(
+    HKCU,
+    'Software\{#AppName}');
+  RegDeleteKeyIfEmpty(
+    HKCU,
+    'Software\{#LegacyAppName}\Startup');
+  RegDeleteKeyIfEmpty(
+    HKCU,
+    'Software\{#LegacyAppName}');
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
@@ -365,6 +520,7 @@ procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usUninstall then
   begin
+    DeleteUserDataOnUninstall := AskToDeleteUserData;
     RemoveOwnedStartupRegistration(
       '{#AppName}',
       'Software\{#AppName}\Startup',
@@ -373,5 +529,11 @@ begin
       '{#LegacyAppName}',
       'Software\{#LegacyAppName}\Startup',
       '{#LegacyAppExecutable}');
+  end;
+
+  if CurUninstallStep = usPostUninstall then
+  begin
+    DeleteUserDataIfRequested;
+    RemoveOwnedRegistryKeys;
   end;
 end;

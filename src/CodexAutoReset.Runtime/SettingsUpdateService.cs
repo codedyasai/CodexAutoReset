@@ -36,6 +36,56 @@ public sealed class SettingsUpdateService
     public Task<GuardSettings> LoadAsync(CancellationToken cancellationToken = default) =>
         loadSettingsAsync(cancellationToken);
 
+    public Task<GuardSettings> SaveAutomationEnabledAsync(
+        bool automationEnabled,
+        CancellationToken cancellationToken) =>
+        SaveSettingsPatchAsync(
+            settings => settings with
+            {
+                AutomationEnabled = automationEnabled,
+            },
+            cancellationToken);
+
+    public Task<GuardSettings> SaveNotifyOnUsageResetAsync(
+        bool notifyOnUsageReset,
+        CancellationToken cancellationToken) =>
+        SaveSettingsPatchAsync(
+            settings => settings with
+            {
+                NotifyOnUsageReset = notifyOnUsageReset,
+            },
+            cancellationToken);
+
+    public Task<GuardSettings> SaveRemainingThresholdPercentAsync(
+        int remainingThresholdPercent,
+        CancellationToken cancellationToken) =>
+        SaveSettingsPatchAsync(
+            settings => settings with
+            {
+                RemainingThresholdPercent = remainingThresholdPercent,
+            },
+            cancellationToken);
+
+    public Task<GuardSettings> SavePollIntervalMinutesAsync(
+        int pollIntervalMinutes,
+        CancellationToken cancellationToken) =>
+        SaveSettingsPatchAsync(
+            settings => settings with
+            {
+                PollIntervalMinutes = pollIntervalMinutes,
+            },
+            cancellationToken);
+
+    public Task<GuardSettings> SaveCodexExecutablePathAsync(
+        string? codexExecutablePath,
+        CancellationToken cancellationToken) =>
+        SaveSettingsPatchAsync(
+            settings => settings with
+            {
+                CodexExecutablePath = codexExecutablePath,
+            },
+            cancellationToken);
+
     public async Task<GuardSettings> SaveCodexExecutablePathAsync(
         GuardSettings previousSettings,
         string? codexExecutablePath,
@@ -57,6 +107,26 @@ public sealed class SettingsUpdateService
             CodexExecutablePath = codexExecutablePath,
         };
         JsonSettingsStore.Validate(updatedSettings);
+        await saveSettingsAsync(updatedSettings, cancellationToken).ConfigureAwait(false);
+        return updatedSettings;
+    }
+
+    private async Task<GuardSettings> SaveSettingsPatchAsync(
+        Func<GuardSettings, GuardSettings> applyPatch,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(applyPatch);
+
+        var currentSettings = await loadSettingsAsync(cancellationToken)
+            .ConfigureAwait(false);
+        JsonSettingsStore.Validate(currentSettings);
+        var updatedSettings = applyPatch(currentSettings);
+        JsonSettingsStore.Validate(updatedSettings);
+        if (updatedSettings == currentSettings)
+        {
+            return currentSettings;
+        }
+
         await saveSettingsAsync(updatedSettings, cancellationToken).ConfigureAwait(false);
         return updatedSettings;
     }

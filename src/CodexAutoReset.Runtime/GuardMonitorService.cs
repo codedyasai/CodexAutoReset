@@ -716,6 +716,10 @@ public sealed class GuardMonitorService : IAsyncDisposable
             {
                 CancelCompatibilityVerification();
             }
+            else if (compatibilityCandidateEligibleAt is { } pendingUntil)
+            {
+                ScheduleCompatibilityVerification(pendingUntil);
+            }
 
             return confirmed;
         }

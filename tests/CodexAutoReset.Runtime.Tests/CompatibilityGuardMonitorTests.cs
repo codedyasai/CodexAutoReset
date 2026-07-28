@@ -272,6 +272,7 @@ public sealed class CompatibilityGuardMonitorTests
         var root = CreateTemporaryDirectory();
         try
         {
+            var time = new MutableTimeProvider(InitialNow);
             var settingsStore = new JsonSettingsStore(
                 RuntimePaths.ForTesting(root).SettingsFile);
             await settingsStore.SaveAsync(
@@ -282,12 +283,19 @@ public sealed class CompatibilityGuardMonitorTests
                 settingsStore,
                 executor,
                 GuardSettings.Default,
-                timeProvider: TimeProvider.System,
-                compatibilityVerificationDelay: TimeSpan.FromMilliseconds(25));
+                timeProvider: time);
+            var pending = new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously);
             var confirmed = new TaskCompletionSource(
                 TaskCreationOptions.RunContinuationsAsynchronously);
             monitor.SnapshotChanged += (_, snapshot) =>
             {
+                if (snapshot.CompatibilityState
+                    == CodexCompatibilityState.VerificationPending)
+                {
+                    pending.TrySetResult();
+                }
+
                 if (snapshot.CompatibilityState
                     == CodexCompatibilityState.ReadUnsupported)
                 {
@@ -296,9 +304,78 @@ public sealed class CompatibilityGuardMonitorTests
             };
 
             await monitor.StartAsync();
+            await pending.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            time.Advance(TimeSpan.FromSeconds(10));
             await confirmed.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
             Assert.IsTrue(executor.CallCount >= 2);
+        }
+        finally
+        {
+            DeleteTemporaryDirectory(root);
+        }
+    }
+
+    [TestMethod]
+    public async Task EarlyVerificationTimerCallbackSchedulesRemainingDelay()
+    {
+        var root = CreateTemporaryDirectory();
+        try
+        {
+            var time = new MutableTimeProvider(InitialNow);
+            var settingsStore = new JsonSettingsStore(
+                RuntimePaths.ForTesting(root).SettingsFile);
+            await settingsStore.SaveAsync(
+                GuardSettings.Default,
+                CancellationToken.None);
+            var executor = new AlwaysInvalidReadExecutor();
+            await using var monitor = new GuardMonitorService(
+                settingsStore,
+                executor,
+                GuardSettings.Default,
+                timeProvider: time);
+            var firstPending = new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            var secondPending = new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            var confirmed = new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            monitor.SnapshotChanged += (_, snapshot) =>
+            {
+                if (snapshot.CompatibilityState
+                    == CodexCompatibilityState.VerificationPending)
+                {
+                    if (executor.CallCount == 1)
+                    {
+                        firstPending.TrySetResult();
+                    }
+                    else if (executor.CallCount == 2)
+                    {
+                        secondPending.TrySetResult();
+                    }
+                }
+
+                if (snapshot.CompatibilityState
+                    == CodexCompatibilityState.ReadUnsupported)
+                {
+                    confirmed.TrySetResult();
+                }
+            };
+
+            await monitor.StartAsync();
+            await firstPending.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            time.FireTimersEarly();
+            await secondPending.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.AreEqual(
+                CodexCompatibilityState.VerificationPending,
+                monitor.CurrentSnapshot.CompatibilityState);
+
+            time.Advance(TimeSpan.FromSeconds(10));
+            await confirmed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.AreEqual(3, executor.CallCount);
         }
         finally
         {
@@ -520,6 +597,20 @@ public sealed class CompatibilityGuardMonitorTests
             }
 
             foreach (var timer in due)
+            {
+                timer.Fire();
+            }
+        }
+
+        public void FireTimersEarly()
+        {
+            List<MutableTimer> active;
+            lock (gate)
+            {
+                active = timers.ToList();
+            }
+
+            foreach (var timer in active)
             {
                 timer.Fire();
             }

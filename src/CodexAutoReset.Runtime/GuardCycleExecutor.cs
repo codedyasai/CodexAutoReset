@@ -36,12 +36,26 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
     {
     }
 
+    public GuardCycleExecutor(
+        RuntimePaths paths,
+        JsonWeeklyUsageResetTracker weeklyUsageResetTracker)
+        : this(
+            paths,
+            new CodexRateLimitClientFactory(),
+            new DpapiSecretProtector(),
+            AppServerLiveResetFailureClassifier.Instance,
+            TimeProvider.System,
+            weeklyUsageResetTracker)
+    {
+    }
+
     internal GuardCycleExecutor(
         RuntimePaths paths,
         IRateLimitClientFactory clientFactory,
         ISecretProtector secretProtector,
         ILiveResetFailureClassifier failureClassifier,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        JsonWeeklyUsageResetTracker? weeklyUsageResetTracker = null)
     {
         ArgumentNullException.ThrowIfNull(paths);
         this.clientFactory = clientFactory
@@ -52,8 +66,8 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
             ?? throw new ArgumentNullException(nameof(failureClassifier));
         this.timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
         liveStore = new JsonLiveAttemptStore(paths.LiveStateFile);
-        weeklyUsageResetTracker = new JsonWeeklyUsageResetTracker(
-            paths.UsageResetStateFile);
+        this.weeklyUsageResetTracker = weeklyUsageResetTracker
+            ?? new JsonWeeklyUsageResetTracker(paths.UsageResetStateFile);
         liveSafetyLatch = new LiveResetSafetyLatch(
             paths.LiveSafetyBlockFile,
             CompatibilityRevision);
@@ -96,6 +110,7 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
                 snapshot,
                 initialEvaluation.Weekly,
                 WeeklyUsageResetAttribution.None,
+                settings.NotifyOnUsageReset,
                 cancellationToken).ConfigureAwait(false);
 
             GuardCycleResult result;
@@ -232,6 +247,7 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
                     result.ActionKind == CycleActionKind.ResetSucceeded
                         ? WeeklyUsageResetAttribution.AutomaticCreditSucceeded
                         : WeeklyUsageResetAttribution.None,
+                    settings.NotifyOnUsageReset,
                     result.ActionKind == CycleActionKind.ResetSucceeded
                         ? CancellationToken.None
                         : cancellationToken).ConfigureAwait(false);
@@ -280,6 +296,7 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
         AccountRateLimits snapshot,
         WindowReading? weekly,
         WeeklyUsageResetAttribution attribution,
+        bool notificationsEnabled,
         CancellationToken cancellationToken)
     {
         if (weekly is null)
@@ -295,6 +312,7 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
                     weekly.ResetsAt,
                     snapshot.ObservedAt),
                 attribution,
+                notificationsEnabled,
                 cancellationToken).ConfigureAwait(false);
             return tracking.Detection;
         }

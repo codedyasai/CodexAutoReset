@@ -17,8 +17,9 @@ public sealed class TrayIconHost : IDisposable
     private readonly Forms.ToolStripMenuItem weeklyItem;
     private readonly Forms.ToolStripMenuItem creditsItem;
     private readonly Forms.ToolStripMenuItem startupItem;
-    private readonly UsageResetNotificationGate usageResetNotificationGate = new();
     private readonly CompatibilityNotificationGate compatibilityNotificationGate;
+    private readonly UsageResetNotificationCoordinator?
+        usageResetNotificationCoordinator;
     private string? lastNotificationCode;
     private bool disposed;
 
@@ -26,11 +27,15 @@ public sealed class TrayIconHost : IDisposable
         MainWindowViewModel viewModel,
         MainWindow window,
         Func<int, Task> exitAsync,
-        string? compatibilityNotificationStatePath = null)
+        string? compatibilityNotificationStatePath = null,
+        UsageResetNotificationCoordinator?
+            usageResetNotificationCoordinator = null)
     {
         this.viewModel = viewModel;
         this.window = window;
         this.exitAsync = exitAsync;
+        this.usageResetNotificationCoordinator =
+            usageResetNotificationCoordinator;
         compatibilityNotificationGate = compatibilityNotificationStatePath is null
             ? new CompatibilityNotificationGate()
             : new CompatibilityNotificationGate(
@@ -44,6 +49,13 @@ public sealed class TrayIconHost : IDisposable
 
         var refreshItem = new Forms.ToolStripMenuItem("지금 새로고침");
         refreshItem.Click += (_, _) => viewModel.RequestRefresh();
+        var notificationItem =
+            new Forms.ToolStripMenuItem("초기화 알림 보기")
+            {
+                Enabled = usageResetNotificationCoordinator is not null,
+            };
+        notificationItem.Click += (_, _) =>
+            usageResetNotificationCoordinator?.BringPendingToFront();
         var openItem = new Forms.ToolStripMenuItem("설정 열기");
         openItem.Click += (_, _) => Dispatch(window.ShowAndActivate);
         var exitItem = new Forms.ToolStripMenuItem("종료");
@@ -57,6 +69,7 @@ public sealed class TrayIconHost : IDisposable
             creditsItem,
             new Forms.ToolStripSeparator(),
             refreshItem,
+            notificationItem,
             openItem,
             startupItem,
             new Forms.ToolStripSeparator(),
@@ -138,17 +151,13 @@ public sealed class TrayIconHost : IDisposable
         };
 
         notifyIcon.Text = BuildTooltip(snapshot);
+        usageResetNotificationCoordinator?.RequestRefresh();
         MaybeNotify(snapshot);
     }
 
     private void MaybeNotify(MonitorSnapshot snapshot)
     {
         if (MaybeNotifyCompatibility(snapshot))
-        {
-            return;
-        }
-
-        if (MaybeNotifyUsageReset(snapshot))
         {
             return;
         }
@@ -203,29 +212,6 @@ public sealed class TrayIconHost : IDisposable
         // Pending verification and confirmed compatibility failures own the
         // notification channel so the generic failure balloon cannot create an
         // early or duplicate warning for the same incident.
-        return true;
-    }
-
-    private bool MaybeNotifyUsageReset(MonitorSnapshot snapshot)
-    {
-        if (snapshot.UsageResetDetection is not { } detection)
-        {
-            return false;
-        }
-
-        var notification = usageResetNotificationGate.Consume(
-            detection,
-            snapshot.Settings.NotifyOnUsageReset);
-        if (notification is null)
-        {
-            return false;
-        }
-
-        notifyIcon.ShowBalloonTip(
-            4000,
-            notification.Title,
-            notification.Body,
-            Forms.ToolTipIcon.Info);
         return true;
     }
 

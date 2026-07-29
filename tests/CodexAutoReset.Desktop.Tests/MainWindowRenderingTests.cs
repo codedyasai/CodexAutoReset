@@ -233,6 +233,7 @@ public sealed class MainWindowRenderingTests
                         codexConnectionPathPanel).X
                     <= codexConnectionPathPanel.ActualWidth + 0.5);
 
+                NotificationPopupWindowTestAssertions.Run();
                 completed = window.IsLoaded && window.ActualWidth > 0 && window.ActualHeight > 0;
             }
             catch (Exception exception)

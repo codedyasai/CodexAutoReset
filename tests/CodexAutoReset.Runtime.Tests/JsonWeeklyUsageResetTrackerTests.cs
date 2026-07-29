@@ -72,6 +72,219 @@ public sealed class JsonWeeklyUsageResetTrackerTests
     }
 
     [TestMethod]
+    public async Task PersistedRecoveryEpisodeMergesRollingScheduleAndSaturationJitter()
+    {
+        using var directory = TestDirectory.Create();
+        var tracker = Tracker(directory);
+        var originalResetAt = Now.AddDays(2);
+        var recoveredResetAt = Now.AddDays(9);
+        _ = await tracker.ObserveAsync(
+            Observation(20, originalResetAt, Now),
+            CancellationToken.None);
+
+        var detected = await tracker.ObserveAsync(
+            Observation(100, recoveredResetAt, Now.AddMinutes(1)),
+            CancellationToken.None);
+        Assert.AreEqual(
+            WeeklyUsageResetTrackingStatus.ResetDetected,
+            detected.Status);
+
+        tracker = Tracker(directory);
+        var rolling = await tracker.ObserveAsync(
+            Observation(
+                100,
+                recoveredResetAt.AddMinutes(1),
+                Now.AddMinutes(2)),
+            CancellationToken.None);
+        Assert.AreEqual(WeeklyUsageResetTrackingStatus.NoReset, rolling.Status);
+        Assert.IsNull(rolling.Detection);
+
+        tracker = Tracker(directory);
+        var jitterDown = await tracker.ObserveAsync(
+            Observation(
+                99,
+                recoveredResetAt.AddMinutes(2),
+                Now.AddMinutes(3)),
+            CancellationToken.None);
+        Assert.AreEqual(
+            WeeklyUsageResetTrackingStatus.NoReset,
+            jitterDown.Status);
+        Assert.IsNull(jitterDown.Detection);
+
+        tracker = Tracker(directory);
+        var jitterUp = await tracker.ObserveAsync(
+            Observation(
+                100,
+                recoveredResetAt.AddMinutes(2),
+                Now.AddMinutes(4)),
+            CancellationToken.None);
+        Assert.AreEqual(
+            WeeklyUsageResetTrackingStatus.NoReset,
+            jitterUp.Status);
+        Assert.IsNull(jitterUp.Detection);
+
+        using var document = JsonDocument.Parse(
+            await File.ReadAllTextAsync(tracker.Path));
+        var root = document.RootElement;
+        Assert.AreEqual(
+            recoveredResetAt.AddMinutes(2).ToUnixTimeSeconds(),
+            root.GetProperty("lastObservation").GetProperty("resetsAt")
+                .GetInt64());
+        Assert.AreEqual(
+            recoveredResetAt.ToUnixTimeSeconds(),
+            root.GetProperty("lastDetection").GetProperty("nextResetsAt")
+                .GetInt64());
+    }
+
+    [TestMethod]
+    public async Task SaturatedBaselineDoesNotTreatRollingScheduleAsReset()
+    {
+        using var directory = TestDirectory.Create();
+        var tracker = Tracker(directory);
+        var initialResetAt = Now.AddDays(7);
+        _ = await tracker.ObserveAsync(
+            Observation(100, initialResetAt, Now),
+            CancellationToken.None);
+
+        tracker = Tracker(directory);
+        var rolling = await tracker.ObserveAsync(
+            Observation(
+                100,
+                initialResetAt.AddMinutes(5),
+                Now.AddMinutes(5)),
+            CancellationToken.None);
+
+        Assert.AreEqual(WeeklyUsageResetTrackingStatus.NoReset, rolling.Status);
+        Assert.IsNull(rolling.Detection);
+        Assert.AreEqual(
+            0,
+            (await tracker.LoadPendingNotificationsAsync(
+                CancellationToken.None)).Count);
+    }
+
+    [TestMethod]
+    public async Task MeaningfulRecoveryDuringRollingScheduleStartsNewEpisode()
+    {
+        using var directory = TestDirectory.Create();
+        var tracker = Tracker(directory);
+        var recoveredResetAt = Now.AddDays(9);
+        _ = await tracker.ObserveAsync(
+            Observation(20, Now.AddDays(2), Now),
+            CancellationToken.None);
+        _ = await tracker.ObserveAsync(
+            Observation(100, recoveredResetAt, Now.AddMinutes(1)),
+            CancellationToken.None);
+
+        var usage = await tracker.ObserveAsync(
+            Observation(
+                50,
+                recoveredResetAt.AddMinutes(1),
+                Now.AddMinutes(2)),
+            CancellationToken.None);
+        Assert.AreEqual(WeeklyUsageResetTrackingStatus.NoReset, usage.Status);
+
+        var recoveredAgain = await tracker.ObserveAsync(
+            Observation(
+                100,
+                recoveredResetAt.AddMinutes(2),
+                Now.AddMinutes(3)),
+            CancellationToken.None);
+
+        Assert.AreEqual(
+            WeeklyUsageResetTrackingStatus.ResetDetected,
+            recoveredAgain.Status);
+        Assert.AreEqual(
+            WeeklyUsageResetKind.Early,
+            recoveredAgain.Detection?.Kind);
+    }
+
+    [TestMethod]
+    public async Task LargeResetScheduleAdvanceStartsNewEpisodeAtSameRemaining()
+    {
+        using var directory = TestDirectory.Create();
+        var tracker = Tracker(directory);
+        var recoveredResetAt = Now.AddDays(9);
+        _ = await tracker.ObserveAsync(
+            Observation(20, Now.AddDays(2), Now),
+            CancellationToken.None);
+        _ = await tracker.ObserveAsync(
+            Observation(100, recoveredResetAt, Now.AddMinutes(1)),
+            CancellationToken.None);
+
+        var nextReset = await tracker.ObserveAsync(
+            Observation(
+                100,
+                recoveredResetAt.AddDays(7),
+                Now.AddMinutes(2)),
+            CancellationToken.None);
+
+        Assert.AreEqual(
+            WeeklyUsageResetTrackingStatus.ResetDetected,
+            nextReset.Status);
+        Assert.AreEqual(WeeklyUsageResetKind.Early, nextReset.Detection?.Kind);
+    }
+
+    [TestMethod]
+    public async Task ScheduledResetIsNotMergedIntoRecoveryEpisode()
+    {
+        using var directory = TestDirectory.Create();
+        var tracker = Tracker(directory);
+        var originalResetAt = Now.AddMinutes(2);
+        var earlyResetAt = Now.AddMinutes(4);
+        _ = await tracker.ObserveAsync(
+            Observation(20, originalResetAt, Now),
+            CancellationToken.None);
+        _ = await tracker.ObserveAsync(
+            Observation(100, earlyResetAt, Now.AddMinutes(1)),
+            CancellationToken.None);
+
+        var scheduled = await tracker.ObserveAsync(
+            Observation(100, Now.AddMinutes(6), Now.AddMinutes(5)),
+            CancellationToken.None);
+
+        Assert.AreEqual(
+            WeeklyUsageResetTrackingStatus.ResetDetected,
+            scheduled.Status);
+        Assert.AreEqual(
+            WeeklyUsageResetKind.Scheduled,
+            scheduled.Detection?.Kind);
+    }
+
+    [TestMethod]
+    public async Task AutomaticCreditIsNotMergedIntoRecoveryEpisode()
+    {
+        using var directory = TestDirectory.Create();
+        var tracker = Tracker(directory);
+        var recoveredResetAt = Now.AddDays(9);
+        _ = await tracker.ObserveAsync(
+            Observation(20, Now.AddDays(2), Now),
+            CancellationToken.None);
+        _ = await tracker.ObserveAsync(
+            Observation(100, recoveredResetAt, Now.AddMinutes(1)),
+            CancellationToken.None);
+        _ = await tracker.ObserveAsync(
+            Observation(5, recoveredResetAt, Now.AddMinutes(2)),
+            CancellationToken.None);
+        _ = await tracker.MarkAutomaticCreditSucceededAsync(
+            Now.AddMinutes(2).AddSeconds(10),
+            CancellationToken.None);
+
+        var automatic = await tracker.ObserveAsync(
+            Observation(
+                100,
+                recoveredResetAt.AddMinutes(1),
+                Now.AddMinutes(3)),
+            CancellationToken.None);
+
+        Assert.AreEqual(
+            WeeklyUsageResetTrackingStatus.ResetDetected,
+            automatic.Status);
+        Assert.AreEqual(
+            WeeklyUsageResetKind.AutomaticCredit,
+            automatic.Detection?.Kind);
+    }
+
+    [TestMethod]
     public async Task SameResetTimeRemainingIncreaseIsPersistedAsEarlyReset()
     {
         using var directory = TestDirectory.Create();
@@ -336,6 +549,38 @@ public sealed class JsonWeeklyUsageResetTrackerTests
     }
 
     [TestMethod]
+    public async Task NullNotificationEventSelfHealsWithoutDetection()
+    {
+        using var directory = TestDirectory.Create();
+        var path = Path.Combine(directory.Path, "usage-reset-state.json");
+        await File.WriteAllTextAsync(
+            path,
+            $$"""
+            {
+              "schemaVersion": 2,
+              "lastObservation": {
+                "remainingPercent": 100,
+                "resetsAt": {{Now.AddDays(2).ToUnixTimeSeconds()}},
+                "observedAt": "{{Now:O}}"
+              },
+              "lastDetection": null,
+              "pendingAutomaticCredit": null,
+              "notificationEvents": [null]
+            }
+            """);
+        var tracker = new JsonWeeklyUsageResetTracker(path);
+
+        var result = await tracker.ObserveAsync(
+            Observation(100, Now.AddDays(2), Now.AddMinutes(1)),
+            CancellationToken.None);
+
+        Assert.AreEqual(
+            WeeklyUsageResetTrackingStatus.BaselineEstablished,
+            result.Status);
+        Assert.IsNull(result.Detection);
+    }
+
+    [TestMethod]
     public async Task ForbiddenPathFailsSoftWithoutNotification()
     {
         using var directory = TestDirectory.Create();
@@ -375,6 +620,7 @@ public sealed class JsonWeeklyUsageResetTrackerTests
             {
                 "lastDetection",
                 "lastObservation",
+                "notificationEvents",
                 "pendingAutomaticCredit",
                 "schemaVersion",
             },
@@ -391,6 +637,224 @@ public sealed class JsonWeeklyUsageResetTrackerTests
             serialized.Contains("creditId", StringComparison.OrdinalIgnoreCase));
         Assert.IsFalse(
             serialized.Contains("path", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [TestMethod]
+    public async Task DetectionAndPendingNotificationAreCommittedTogether()
+    {
+        using var directory = TestDirectory.Create();
+        var tracker = Tracker(directory);
+        _ = await tracker.ObserveAsync(
+            Observation(20, Now.AddDays(2), Now),
+            CancellationToken.None);
+
+        var result = await tracker.ObserveAsync(
+            Observation(100, Now.AddDays(9), Now.AddMinutes(1)),
+            WeeklyUsageResetAttribution.None,
+            notificationsEnabled: true,
+            CancellationToken.None);
+        var pending = await tracker.LoadPendingNotificationsAsync(
+            CancellationToken.None);
+
+        Assert.AreEqual(
+            WeeklyUsageResetTrackingStatus.ResetDetected,
+            result.Status);
+        Assert.AreEqual(1, pending.Count);
+        Assert.AreEqual(result.Detection, pending[0].Detection);
+
+        using var document = JsonDocument.Parse(
+            await File.ReadAllTextAsync(tracker.Path));
+        Assert.AreEqual(
+            2,
+            document.RootElement.GetProperty("schemaVersion").GetInt32());
+        Assert.AreEqual(
+            "pending",
+            document.RootElement.GetProperty("notificationEvents")[0]
+                .GetProperty("attentionState").GetString());
+        var eventNames = document.RootElement
+            .GetProperty("notificationEvents")[0]
+            .EnumerateObject()
+            .Select(property => property.Name)
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                "attentionState",
+                "detectedAt",
+                "eventId",
+                "kind",
+                "nextResetsAt",
+                "resolvedAt",
+            },
+            eventNames);
+        var serialized = document.RootElement.GetRawText();
+        Assert.IsFalse(
+            serialized.Contains("title", StringComparison.OrdinalIgnoreCase));
+        Assert.IsFalse(
+            serialized.Contains("message", StringComparison.OrdinalIgnoreCase));
+        Assert.IsFalse(
+            serialized.Contains("Codex", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [TestMethod]
+    public async Task VersionOneMigrationDoesNotReplayPastDetection()
+    {
+        using var directory = TestDirectory.Create();
+        var path = Path.Combine(directory.Path, "usage-reset-state.json");
+        var resetAt = Now.AddDays(9).ToUnixTimeSeconds();
+        await File.WriteAllTextAsync(
+            path,
+            $$"""
+            {
+              "schemaVersion": 1,
+              "lastObservation": {
+                "remainingPercent": 100,
+                "resetsAt": {{resetAt}},
+                "observedAt": "{{Now.AddMinutes(1):O}}"
+              },
+              "lastDetection": {
+                "kind": "early",
+                "nextResetsAt": {{resetAt}},
+                "detectedAt": "{{Now.AddMinutes(1):O}}"
+              },
+              "pendingAutomaticCredit": null
+            }
+            """);
+        var tracker = new JsonWeeklyUsageResetTracker(path);
+
+        var pending = await tracker.LoadPendingNotificationsAsync(
+            CancellationToken.None);
+        _ = await tracker.ObserveAsync(
+            Observation(100, Now.AddDays(9), Now.AddMinutes(2)),
+            CancellationToken.None);
+
+        Assert.AreEqual(0, pending.Count);
+        using var document = JsonDocument.Parse(
+            await File.ReadAllTextAsync(path));
+        Assert.AreEqual(
+            2,
+            document.RootElement.GetProperty("schemaVersion").GetInt32());
+        Assert.AreEqual(
+            0,
+            document.RootElement.GetProperty("notificationEvents")
+                .GetArrayLength());
+    }
+
+    [TestMethod]
+    public async Task DisabledNotificationIsSuppressedAndNeverReplayed()
+    {
+        using var directory = TestDirectory.Create();
+        var tracker = Tracker(directory);
+        _ = await tracker.ObserveAsync(
+            Observation(20, Now.AddDays(2), Now),
+            CancellationToken.None);
+
+        var result = await tracker.ObserveAsync(
+            Observation(100, Now.AddDays(9), Now.AddMinutes(1)),
+            WeeklyUsageResetAttribution.None,
+            notificationsEnabled: false,
+            CancellationToken.None);
+
+        Assert.IsNotNull(result.Detection);
+        Assert.AreEqual(
+            0,
+            (await tracker.LoadPendingNotificationsAsync(
+                CancellationToken.None)).Count);
+        using var document = JsonDocument.Parse(
+            await File.ReadAllTextAsync(tracker.Path));
+        Assert.AreEqual(
+            "suppressed",
+            document.RootElement.GetProperty("notificationEvents")[0]
+                .GetProperty("attentionState").GetString());
+    }
+
+    [TestMethod]
+    public async Task AcknowledgementPersistsAcrossTrackerRestart()
+    {
+        using var directory = TestDirectory.Create();
+        var tracker = Tracker(directory);
+        _ = await tracker.ObserveAsync(
+            Observation(20, Now.AddDays(2), Now),
+            CancellationToken.None);
+        _ = await tracker.ObserveAsync(
+            Observation(100, Now.AddDays(9), Now.AddMinutes(1)),
+            CancellationToken.None);
+        var pending = await tracker.LoadPendingNotificationsAsync(
+            CancellationToken.None);
+
+        var saved = await tracker.AcknowledgeNotificationAsync(
+            pending[0].EventId,
+            Now.AddMinutes(2),
+            CancellationToken.None);
+        var restored = await Tracker(directory).LoadPendingNotificationsAsync(
+            CancellationToken.None);
+
+        Assert.IsTrue(saved);
+        Assert.AreEqual(0, restored.Count);
+        using var document = JsonDocument.Parse(
+            await File.ReadAllTextAsync(tracker.Path));
+        Assert.AreEqual(
+            "acknowledged",
+            document.RootElement.GetProperty("notificationEvents")[0]
+                .GetProperty("attentionState").GetString());
+    }
+
+    [TestMethod]
+    public async Task SuppressingPendingNotificationsKeepsThemFromReappearing()
+    {
+        using var directory = TestDirectory.Create();
+        var tracker = Tracker(directory);
+        _ = await tracker.ObserveAsync(
+            Observation(20, Now.AddDays(2), Now),
+            CancellationToken.None);
+        _ = await tracker.ObserveAsync(
+            Observation(100, Now.AddDays(9), Now.AddMinutes(1)),
+            CancellationToken.None);
+
+        var saved = await tracker.SuppressPendingNotificationsAsync(
+            Now.AddMinutes(2),
+            CancellationToken.None);
+
+        Assert.IsTrue(saved);
+        Assert.AreEqual(
+            0,
+            (await Tracker(directory).LoadPendingNotificationsAsync(
+                CancellationToken.None)).Count);
+    }
+
+    [TestMethod]
+    public async Task SuppressionCutoffKeepsNewerPendingNotification()
+    {
+        using var directory = TestDirectory.Create();
+        var tracker = Tracker(directory);
+        _ = await tracker.ObserveAsync(
+            Observation(20, Now.AddDays(2), Now),
+            CancellationToken.None);
+        _ = await tracker.ObserveAsync(
+            Observation(100, Now.AddDays(9), Now.AddMinutes(1)),
+            CancellationToken.None);
+        _ = await tracker.ObserveAsync(
+            Observation(50, Now.AddDays(9), Now.AddMinutes(2)),
+            CancellationToken.None);
+        _ = await tracker.ObserveAsync(
+            Observation(
+                100,
+                Now.AddDays(9).AddMinutes(1),
+                Now.AddMinutes(3)),
+            CancellationToken.None);
+
+        var saved =
+            await tracker.SuppressPendingNotificationsThroughAsync(
+                Now.AddMinutes(2),
+                Now.AddMinutes(4),
+                CancellationToken.None);
+        var pending = await tracker.LoadPendingNotificationsAsync(
+            CancellationToken.None);
+
+        Assert.IsTrue(saved);
+        Assert.AreEqual(1, pending.Count);
+        Assert.AreEqual(Now.AddMinutes(3), pending[0].Detection.DetectedAt);
     }
 
     private static JsonWeeklyUsageResetTracker Tracker(TestDirectory directory) =>

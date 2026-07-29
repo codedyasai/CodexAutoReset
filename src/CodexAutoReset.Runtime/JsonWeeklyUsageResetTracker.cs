@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using CodexAutoReset.Core;
@@ -17,6 +18,10 @@ public sealed record WeeklyUsageResetTrackingResult(
     WeeklyUsageResetTrackingStatus Status,
     WeeklyUsageResetDetection? Detection);
 
+public sealed record PendingUsageResetNotification(
+    string EventId,
+    WeeklyUsageResetDetection Detection);
+
 public enum AutomaticCreditAttributionTrackingStatus
 {
     Recorded,
@@ -27,7 +32,14 @@ public enum AutomaticCreditAttributionTrackingStatus
 public sealed class JsonWeeklyUsageResetTracker
 {
     private const string RequiredFileName = "usage-reset-state.json";
+    private const int CurrentSchemaVersion = 2;
     private const long MaximumDocumentBytes = 64 * 1024;
+    private const int MaximumNotificationEventCount = 128;
+    private const int MaximumPendingNotificationCount = 64;
+    private const int RetainedResolvedNotificationCount = 32;
+    private const double SaturationJitterFloorPercent = 99d;
+    private static readonly TimeSpan RollingResetTimeSlack =
+        TimeSpan.FromMinutes(5);
 
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
@@ -35,6 +47,12 @@ public sealed class JsonWeeklyUsageResetTracker
         PropertyNameCaseInsensitive = false,
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
         WriteIndented = true,
+        Converters =
+        {
+            new JsonStringEnumConverter(
+                JsonNamingPolicy.CamelCase,
+                allowIntegerValues: false),
+        },
     };
 
     private readonly string path;
@@ -51,6 +69,7 @@ public sealed class JsonWeeklyUsageResetTracker
     public async Task<WeeklyUsageResetTrackingResult> ObserveAsync(
         WeeklyUsageObservation observation,
         WeeklyUsageResetAttribution attribution,
+        bool notificationsEnabled,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(observation);
@@ -149,19 +168,47 @@ public sealed class JsonWeeklyUsageResetTracker
                 return Ignored();
             }
 
+            var detection = evaluation.Detection;
+            if (ShouldMergeSaturatedRollingAdvance(
+                    previous,
+                    observation,
+                    detection)
+                || ShouldMergeWithPersistedRecoveryEpisode(
+                    state.LastDetection,
+                    previous,
+                    observation,
+                    detection))
+            {
+                detection = null;
+            }
+
+            var notificationEvents = state.NotificationEvents.ToList();
+            if (detection is not null)
+            {
+                if (!TryAppendNotificationEvent(
+                        notificationEvents,
+                        detection,
+                        notificationsEnabled))
+                {
+                    return Unavailable();
+                }
+            }
+
             var updatedState = state with
             {
                 LastObservation = StoredWeeklyUsageObservation.FromObservation(
                     observation),
-                LastDetection = evaluation.Detection is null
+                LastDetection = detection is null
                     ? state.LastDetection
                     : StoredWeeklyUsageResetDetection.FromDetection(
-                        evaluation.Detection),
+                        detection),
                 PendingAutomaticCredit =
-                    evaluation.Detection?.Kind
+                    detection?.Kind
                         == WeeklyUsageResetKind.AutomaticCredit
                             ? null
                             : pendingAttribution,
+                NotificationEvents = PruneNotificationEvents(
+                    notificationEvents),
             };
 
             try
@@ -182,10 +229,11 @@ public sealed class JsonWeeklyUsageResetTracker
                     new WeeklyUsageResetTrackingResult(
                         WeeklyUsageResetTrackingStatus.BaselineEstablished,
                         Detection: null),
-                WeeklyUsageObservationDisposition.ResetDetected =>
+                WeeklyUsageObservationDisposition.ResetDetected
+                    when detection is not null =>
                     new WeeklyUsageResetTrackingResult(
                         WeeklyUsageResetTrackingStatus.ResetDetected,
-                        evaluation.Detection),
+                        detection),
                 _ => new WeeklyUsageResetTrackingResult(
                     WeeklyUsageResetTrackingStatus.NoReset,
                     Detection: null),
@@ -199,10 +247,115 @@ public sealed class JsonWeeklyUsageResetTracker
 
     public Task<WeeklyUsageResetTrackingResult> ObserveAsync(
         WeeklyUsageObservation observation,
+        WeeklyUsageResetAttribution attribution,
+        CancellationToken cancellationToken) => ObserveAsync(
+            observation,
+            attribution,
+            notificationsEnabled: true,
+            cancellationToken);
+
+    public Task<WeeklyUsageResetTrackingResult> ObserveAsync(
+        WeeklyUsageObservation observation,
         CancellationToken cancellationToken) => ObserveAsync(
             observation,
             WeeklyUsageResetAttribution.None,
+            notificationsEnabled: true,
             cancellationToken);
+
+    public async Task<IReadOnlyList<PendingUsageResetNotification>>
+        LoadPendingNotificationsAsync(CancellationToken cancellationToken)
+    {
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            try
+            {
+                var state = await LoadAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                return state.NotificationEvents
+                    .Where(notification =>
+                        notification.AttentionState
+                            == StoredNotificationAttentionState.Pending)
+                    .Select(notification => notification.ToPending())
+                    .ToArray();
+            }
+            catch (Exception exception) when (
+                exception is not OperationCanceledException
+                && !IsFatal(exception))
+            {
+                return [];
+            }
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    public async Task<bool> AcknowledgeNotificationAsync(
+        string eventId,
+        DateTimeOffset acknowledgedAt,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(eventId);
+        if (acknowledgedAt < DateTimeOffset.UnixEpoch)
+        {
+            throw new ArgumentOutOfRangeException(nameof(acknowledgedAt));
+        }
+
+        return await ResolveNotificationsAsync(
+            notification => string.Equals(
+                notification.EventId,
+                eventId,
+                StringComparison.Ordinal),
+            StoredNotificationAttentionState.Acknowledged,
+            acknowledgedAt,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public Task<bool> SuppressPendingNotificationsAsync(
+        DateTimeOffset suppressedAt,
+        CancellationToken cancellationToken)
+    {
+        if (suppressedAt < DateTimeOffset.UnixEpoch)
+        {
+            throw new ArgumentOutOfRangeException(nameof(suppressedAt));
+        }
+
+        return ResolveNotificationsAsync(
+            notification =>
+                notification.AttentionState
+                    == StoredNotificationAttentionState.Pending,
+            StoredNotificationAttentionState.Suppressed,
+            suppressedAt,
+            cancellationToken);
+    }
+
+    public Task<bool> SuppressPendingNotificationsThroughAsync(
+        DateTimeOffset detectedOnOrBefore,
+        DateTimeOffset suppressedAt,
+        CancellationToken cancellationToken)
+    {
+        if (detectedOnOrBefore < DateTimeOffset.UnixEpoch)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(detectedOnOrBefore));
+        }
+
+        if (suppressedAt < DateTimeOffset.UnixEpoch)
+        {
+            throw new ArgumentOutOfRangeException(nameof(suppressedAt));
+        }
+
+        return ResolveNotificationsAsync(
+            notification =>
+                notification.AttentionState
+                    == StoredNotificationAttentionState.Pending
+                && notification.DetectedAt <= detectedOnOrBefore,
+            StoredNotificationAttentionState.Suppressed,
+            suppressedAt,
+            cancellationToken);
+    }
 
     public async Task<AutomaticCreditAttributionTrackingStatus>
         MarkAutomaticCreditSucceededAsync(
@@ -267,6 +420,143 @@ public sealed class JsonWeeklyUsageResetTracker
         }
     }
 
+    private async Task<bool> ResolveNotificationsAsync(
+        Func<StoredUsageResetNotification, bool> shouldResolve,
+        StoredNotificationAttentionState resolvedState,
+        DateTimeOffset resolvedAt,
+        CancellationToken cancellationToken)
+    {
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            try
+            {
+                var state = await LoadAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                var changed = false;
+                var notificationEvents = state.NotificationEvents
+                    .Select(notification =>
+                    {
+                        if (notification.AttentionState
+                                != StoredNotificationAttentionState.Pending
+                            || !shouldResolve(notification))
+                        {
+                            return notification;
+                        }
+
+                        changed = true;
+                        return notification with
+                        {
+                            AttentionState = resolvedState,
+                            ResolvedAt = resolvedAt < notification.DetectedAt
+                                ? notification.DetectedAt
+                                : resolvedAt,
+                        };
+                    })
+                    .ToList();
+                if (!changed)
+                {
+                    return true;
+                }
+
+                await SaveAsync(
+                    state with
+                    {
+                        NotificationEvents = PruneNotificationEvents(
+                            notificationEvents),
+                    },
+                    cancellationToken).ConfigureAwait(false);
+                return true;
+            }
+            catch (Exception exception) when (
+                exception is not OperationCanceledException
+                && !IsFatal(exception))
+            {
+                return false;
+            }
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private static bool TryAppendNotificationEvent(
+        List<StoredUsageResetNotification> notificationEvents,
+        WeeklyUsageResetDetection detection,
+        bool notificationsEnabled)
+    {
+        var eventId = BuildNotificationEventId(detection);
+        if (notificationEvents.Any(notification => string.Equals(
+                notification.EventId,
+                eventId,
+                StringComparison.Ordinal)))
+        {
+            return true;
+        }
+
+        if (notificationsEnabled
+            && notificationEvents.Count(notification =>
+                notification.AttentionState
+                    == StoredNotificationAttentionState.Pending)
+                >= MaximumPendingNotificationCount)
+        {
+            return false;
+        }
+
+        notificationEvents.Add(
+            StoredUsageResetNotification.FromDetection(
+                detection,
+                notificationsEnabled
+                    ? StoredNotificationAttentionState.Pending
+                    : StoredNotificationAttentionState.Suppressed,
+                notificationsEnabled ? null : detection.DetectedAt));
+        return true;
+    }
+
+    private static List<StoredUsageResetNotification>
+        PruneNotificationEvents(
+            IReadOnlyList<StoredUsageResetNotification> notificationEvents)
+    {
+        var pending = notificationEvents
+            .Where(notification =>
+                notification.AttentionState
+                    == StoredNotificationAttentionState.Pending);
+        var resolved = notificationEvents
+            .Where(notification =>
+                notification.AttentionState
+                    != StoredNotificationAttentionState.Pending)
+            .TakeLast(RetainedResolvedNotificationCount);
+        return pending
+            .Concat(resolved)
+            .OrderBy(notification => notification.DetectedAt)
+            .Take(MaximumNotificationEventCount)
+            .ToList();
+    }
+
+    private static string BuildNotificationEventId(
+        WeeklyUsageResetDetection detection) => string.Create(
+            CultureInfo.InvariantCulture,
+            $"{(int)detection.Kind}:{detection.NextResetsAt}:"
+                + $"{detection.DetectedAt.ToUniversalTime().Ticks}");
+
+    private static UsageResetStateDocument MigrateVersionOne(
+        UsageResetStateDocumentV1? state)
+    {
+        if (state is null)
+        {
+            throw new InvalidDataException();
+        }
+
+        return new UsageResetStateDocument
+        {
+            LastObservation = state.LastObservation,
+            LastDetection = state.LastDetection,
+            PendingAutomaticCredit = state.PendingAutomaticCredit,
+            NotificationEvents = [],
+        };
+    }
+
     private async Task<UsageResetStateDocument> LoadAsync(
         CancellationToken cancellationToken)
     {
@@ -293,8 +583,25 @@ public sealed class JsonWeeklyUsageResetTracker
             cancellationToken: cancellationToken).ConfigureAwait(false);
         EnsureNoDuplicateMembers(document.RootElement);
 
-        var state = document.RootElement.Deserialize<UsageResetStateDocument>(
-            SerializerOptions);
+        if (document.RootElement.ValueKind != JsonValueKind.Object
+            || !document.RootElement.TryGetProperty(
+                "schemaVersion",
+                out var schemaElement)
+            || !schemaElement.TryGetInt32(out var schemaVersion))
+        {
+            throw new InvalidDataException();
+        }
+
+        var state = schemaVersion switch
+        {
+            1 => MigrateVersionOne(
+                document.RootElement.Deserialize<UsageResetStateDocumentV1>(
+                    SerializerOptions)),
+            CurrentSchemaVersion =>
+                document.RootElement.Deserialize<UsageResetStateDocument>(
+                    SerializerOptions),
+            _ => throw new InvalidDataException(),
+        };
         ValidateState(state);
         return state!;
     }
@@ -443,9 +750,17 @@ public sealed class JsonWeeklyUsageResetTracker
     private static void ValidateState(UsageResetStateDocument? state)
     {
         if (state is null
-            || state.SchemaVersion != 1
+            || state.SchemaVersion != CurrentSchemaVersion
             || state.LastObservation is not { } lastObservation
-            || !WeeklyUsageResetDetector.IsValid(lastObservation.ToObservation()))
+            || !WeeklyUsageResetDetector.IsValid(lastObservation.ToObservation())
+            || state.NotificationEvents is null
+            || state.NotificationEvents.Count > MaximumNotificationEventCount
+            || state.NotificationEvents.Any(notification =>
+                notification is null)
+            || state.NotificationEvents.Count(notification =>
+                notification?.AttentionState
+                    == StoredNotificationAttentionState.Pending)
+                > MaximumPendingNotificationCount)
         {
             throw new InvalidDataException();
         }
@@ -458,6 +773,21 @@ public sealed class JsonWeeklyUsageResetTracker
         if (state.PendingAutomaticCredit is { } pending)
         {
             pending.Validate(lastObservation);
+        }
+
+        var eventIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var notification in state.NotificationEvents)
+        {
+            if (notification is null)
+            {
+                throw new InvalidDataException();
+            }
+
+            notification.Validate();
+            if (!eventIds.Add(notification.EventId))
+            {
+                throw new InvalidDataException();
+            }
         }
     }
 
@@ -538,6 +868,77 @@ public sealed class JsonWeeklyUsageResetTracker
         && current.ObservedAt
             < DateTimeOffset.FromUnixTimeSeconds(pending.BaselineResetsAt);
 
+    private static bool ShouldMergeWithPersistedRecoveryEpisode(
+        StoredWeeklyUsageResetDetection? episode,
+        WeeklyUsageObservation? previous,
+        WeeklyUsageObservation current,
+        WeeklyUsageResetDetection? candidate)
+    {
+        if (episode is null
+            || previous is null
+            || candidate?.Kind != WeeklyUsageResetKind.Early
+            || current.ObservedAt < episode.DetectedAt
+            || !IsWithinRollingResetSchedule(episode, current))
+        {
+            return false;
+        }
+
+        var remainingIncreased =
+            current.RemainingPercent > previous.RemainingPercent;
+        if (current.ResetsAt > previous.ResetsAt)
+        {
+            return !remainingIncreased
+                || IsSaturationJitter(previous, current);
+        }
+
+        return current.ResetsAt == previous.ResetsAt
+            && IsSaturationJitter(previous, current);
+    }
+
+    private static bool ShouldMergeSaturatedRollingAdvance(
+        WeeklyUsageObservation? previous,
+        WeeklyUsageObservation current,
+        WeeklyUsageResetDetection? candidate)
+    {
+        if (previous is null
+            || candidate?.Kind != WeeklyUsageResetKind.Early
+            || previous.RemainingPercent < SaturationJitterFloorPercent
+            || current.RemainingPercent < SaturationJitterFloorPercent
+            || current.ResetsAt <= previous.ResetsAt)
+        {
+            return false;
+        }
+
+        var resetAdvanceSeconds = current.ResetsAt - previous.ResetsAt;
+        var observationElapsed = current.ObservedAt - previous.ObservedAt;
+        return observationElapsed >= TimeSpan.Zero
+            && resetAdvanceSeconds
+                <= observationElapsed.TotalSeconds
+                    + RollingResetTimeSlack.TotalSeconds;
+    }
+
+    private static bool IsWithinRollingResetSchedule(
+        StoredWeeklyUsageResetDetection episode,
+        WeeklyUsageObservation current)
+    {
+        var resetAdvanceSeconds = current.ResetsAt - episode.NextResetsAt;
+        if (resetAdvanceSeconds < 0)
+        {
+            return false;
+        }
+
+        var elapsed = current.ObservedAt - episode.DetectedAt;
+        return resetAdvanceSeconds
+            <= elapsed.TotalSeconds + RollingResetTimeSlack.TotalSeconds;
+    }
+
+    private static bool IsSaturationJitter(
+        WeeklyUsageObservation previous,
+        WeeklyUsageObservation current) =>
+        previous.RemainingPercent >= SaturationJitterFloorPercent
+        && current.RemainingPercent >= SaturationJitterFloorPercent
+        && current.RemainingPercent > previous.RemainingPercent;
+
     private static WeeklyUsageResetTrackingResult Ignored() => new(
         WeeklyUsageResetTrackingStatus.ObservationIgnored,
         Detection: null);
@@ -549,7 +950,33 @@ public sealed class JsonWeeklyUsageResetTracker
     private sealed record UsageResetStateDocument
     {
         [JsonRequired]
-        public int SchemaVersion { get; init; } = 1;
+        public int SchemaVersion { get; init; } = CurrentSchemaVersion;
+
+        [JsonRequired]
+        public StoredWeeklyUsageObservation? LastObservation { get; init; }
+
+        [JsonRequired]
+        public StoredWeeklyUsageResetDetection? LastDetection { get; init; }
+
+        [JsonRequired]
+        public StoredAutomaticCreditAttribution? PendingAutomaticCredit
+        {
+            get;
+            init;
+        }
+
+        [JsonRequired]
+        public List<StoredUsageResetNotification> NotificationEvents
+        {
+            get;
+            init;
+        } = [];
+    }
+
+    private sealed record UsageResetStateDocumentV1
+    {
+        [JsonRequired]
+        public int SchemaVersion { get; init; }
 
         [JsonRequired]
         public StoredWeeklyUsageObservation? LastObservation { get; init; }
@@ -624,6 +1051,100 @@ public sealed class JsonWeeklyUsageResetTracker
                 NextResetsAt = detection.NextResetsAt,
                 DetectedAt = detection.DetectedAt,
             };
+    }
+
+    private enum StoredNotificationAttentionState
+    {
+        Pending,
+        Acknowledged,
+        Suppressed,
+    }
+
+    private sealed record StoredUsageResetNotification
+    {
+        [JsonRequired]
+        public string EventId { get; init; } = string.Empty;
+
+        [JsonRequired]
+        public string Kind { get; init; } = string.Empty;
+
+        [JsonRequired]
+        public long NextResetsAt { get; init; }
+
+        [JsonRequired]
+        public DateTimeOffset DetectedAt { get; init; }
+
+        [JsonRequired]
+        public StoredNotificationAttentionState AttentionState { get; init; }
+
+        [JsonRequired]
+        public DateTimeOffset? ResolvedAt { get; init; }
+
+        public PendingUsageResetNotification ToPending()
+        {
+            var detection = ToDetection();
+            return new PendingUsageResetNotification(EventId, detection);
+        }
+
+        public void Validate()
+        {
+            var detection = ToDetection();
+            if (!string.Equals(
+                    EventId,
+                    BuildNotificationEventId(detection),
+                    StringComparison.Ordinal)
+                || !Enum.IsDefined(AttentionState)
+                || AttentionState == StoredNotificationAttentionState.Pending
+                    && ResolvedAt is not null
+                || AttentionState != StoredNotificationAttentionState.Pending
+                    && (ResolvedAt is null
+                        || ResolvedAt < detection.DetectedAt))
+            {
+                throw new InvalidDataException();
+            }
+        }
+
+        public static StoredUsageResetNotification FromDetection(
+            WeeklyUsageResetDetection detection,
+            StoredNotificationAttentionState attentionState,
+            DateTimeOffset? resolvedAt) => new()
+            {
+                EventId = BuildNotificationEventId(detection),
+                Kind = detection.Kind switch
+                {
+                    WeeklyUsageResetKind.Scheduled => "scheduled",
+                    WeeklyUsageResetKind.Early => "early",
+                    WeeklyUsageResetKind.AutomaticCredit => "automaticCredit",
+                    _ => throw new InvalidDataException(),
+                },
+                NextResetsAt = detection.NextResetsAt,
+                DetectedAt = detection.DetectedAt,
+                AttentionState = attentionState,
+                ResolvedAt = resolvedAt,
+            };
+
+        private WeeklyUsageResetDetection ToDetection()
+        {
+            var kind = Kind switch
+            {
+                "scheduled" => WeeklyUsageResetKind.Scheduled,
+                "early" => WeeklyUsageResetKind.Early,
+                "automaticCredit" => WeeklyUsageResetKind.AutomaticCredit,
+                _ => throw new InvalidDataException(),
+            };
+            var detection = new WeeklyUsageResetDetection(
+                kind,
+                NextResetsAt,
+                DetectedAt);
+            if (!Enum.IsDefined(detection.Kind)
+                || detection.NextResetsAt is <= 0 or > 253_402_300_799
+                || detection.DetectedAt < DateTimeOffset.UnixEpoch)
+            {
+                throw new InvalidDataException();
+            }
+
+            return detection;
+        }
     }
 
     private sealed record StoredAutomaticCreditAttribution

@@ -15,6 +15,8 @@ public partial class App : System.Windows.Application
     private GuardMonitorService? monitor;
     private MainWindowViewModel? viewModel;
     private TrayIconHost? tray;
+    private UsageResetNotificationCoordinator?
+        usageResetNotificationCoordinator;
     private bool stopping;
 
     protected override async void OnStartup(StartupEventArgs eventArgs)
@@ -83,7 +85,11 @@ public partial class App : System.Windows.Application
                 return;
             }
 
-            var cycleExecutor = new GuardCycleExecutor(paths);
+            var usageResetTracker = new JsonWeeklyUsageResetTracker(
+                paths.UsageResetStateFile);
+            var cycleExecutor = new GuardCycleExecutor(
+                paths,
+                usageResetTracker);
             monitor = new GuardMonitorService(
                 settingsStore,
                 cycleExecutor,
@@ -95,19 +101,33 @@ public partial class App : System.Windows.Application
                 startupService,
                 monitor,
                 settings);
-            var window = new MainWindow(viewModel);
+            var window = new MainWindow(
+                viewModel,
+                SetUsageResetNotificationsEnabledAsync);
             MainWindow = window;
+
+            var popupPresenter = new NotificationPopupController(
+                window.ShowAndActivate);
+            usageResetNotificationCoordinator =
+                new UsageResetNotificationCoordinator(
+                    usageResetTracker,
+                    popupPresenter);
+            await usageResetNotificationCoordinator.InitializeAsync(
+                settings.NotifyOnUsageReset,
+                CancellationToken.None);
 
             tray = new TrayIconHost(
                 viewModel,
                 window,
                 ShutdownSafelyAsync,
-                paths.CompatibilityNotificationStateFile);
+                paths.CompatibilityNotificationStateFile,
+                usageResetNotificationCoordinator);
             await monitor.StartAsync();
 
             if (!arguments.Background)
             {
                 window.ShowAndActivate();
+                usageResetNotificationCoordinator.BringPendingToFront();
             }
         }
         catch (SettingsException exception)
@@ -154,6 +174,12 @@ public partial class App : System.Windows.Application
         tray?.Dispose();
         tray = null;
 
+        if (usageResetNotificationCoordinator is not null)
+        {
+            await usageResetNotificationCoordinator.DisposeAsync();
+            usageResetNotificationCoordinator = null;
+        }
+
         if (viewModel is not null)
         {
             await viewModel.StopAndDrainSettingsAsync();
@@ -170,6 +196,12 @@ public partial class App : System.Windows.Application
         instanceLease = null;
         Shutdown(exitCode);
     }
+
+    private Task SetUsageResetNotificationsEnabledAsync(bool enabled) =>
+        usageResetNotificationCoordinator?.SetEnabledAsync(
+            enabled,
+            CancellationToken.None)
+        ?? Task.CompletedTask;
 
     private sealed record DesktopArguments(
         bool Background,

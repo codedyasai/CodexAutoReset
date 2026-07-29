@@ -1,0 +1,276 @@
+<Window x:Class="CodexAutoReset.Desktop.NotificationPopupWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="CodexAutoReset 사용량 초기화 알림"
+        Width="420"
+        MinWidth="360"
+        MaxWidth="480"
+        MaxHeight="560"
+        SizeToContent="Height"
+        WindowStartupLocation="Manual"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ShowActivated="False"
+        ShowInTaskbar="False"
+        Topmost="False"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True"
+        TextOptions.TextFormattingMode="Display"
+        KeyboardNavigation.TabNavigation="Cycle"
+        AutomationProperties.Name="CodexAutoReset 사용량 초기화 알림">
+    <Window.Resources>
+        <SolidColorBrush x:Key="PopupBackgroundBrush" Color="#F8F2E8" />
+        <SolidColorBrush x:Key="PopupCardBrush" Color="#FFFFFF" />
+        <SolidColorBrush x:Key="PopupSurfaceBrush" Color="#FAFAF9" />
+        <SolidColorBrush x:Key="PopupBorderBrush" Color="#E3DDD5" />
+        <SolidColorBrush x:Key="PopupTextBrush" Color="#1A1C1F" />
+        <SolidColorBrush x:Key="PopupSecondaryTextBrush" Color="#5A5A5D" />
+
+        <Style x:Key="PopupFocusVisualStyle" TargetType="Control">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate>
+                        <Rectangle Margin="2"
+                                   Stroke="#1A1C1F"
+                                   StrokeThickness="2"
+                                   StrokeDashArray="1 1"
+                                   SnapsToDevicePixels="True" />
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="PopupButtonStyle" TargetType="Button">
+            <Setter Property="MinWidth" Value="94" />
+            <Setter Property="MinHeight" Value="42" />
+            <Setter Property="Padding" Value="16,9" />
+            <Setter Property="FontFamily" Value="Segoe UI" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{StaticResource PopupTextBrush}" />
+            <Setter Property="Background" Value="{StaticResource PopupSurfaceBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource PopupBorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FocusVisualStyle"
+                    Value="{StaticResource PopupFocusVisualStyle}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ButtonBorder"
+                                Padding="{TemplateBinding Padding}"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="10">
+                            <TextBlock HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       FontFamily="{TemplateBinding FontFamily}"
+                                       FontSize="{TemplateBinding FontSize}"
+                                       FontWeight="{TemplateBinding FontWeight}"
+                                       Foreground="{TemplateBinding Foreground}"
+                                       Text="{TemplateBinding Content}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ButtonBorder"
+                                        Property="Opacity"
+                                        Value="0.86" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="ButtonBorder"
+                                        Property="Opacity"
+                                        Value="0.70" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="ButtonBorder"
+                                        Property="BorderBrush"
+                                        Value="#1A1C1F" />
+                                <Setter TargetName="ButtonBorder"
+                                        Property="BorderThickness"
+                                        Value="2" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="PopupCloseButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="32" />
+            <Setter Property="Height" Value="32" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="FontFamily" Value="Segoe UI Symbol" />
+            <Setter Property="FontSize" Value="21" />
+            <Setter Property="FontWeight" Value="Normal" />
+            <Setter Property="Foreground" Value="{StaticResource PopupTextBrush}" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FocusVisualStyle"
+                    Value="{StaticResource PopupFocusVisualStyle}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="CloseButtonBackground"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="8">
+                            <TextBlock HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       Margin="0,-2,0,0"
+                                       FontFamily="{TemplateBinding FontFamily}"
+                                       FontSize="{TemplateBinding FontSize}"
+                                       FontWeight="{TemplateBinding FontWeight}"
+                                       Foreground="{TemplateBinding Foreground}"
+                                       Text="{TemplateBinding Content}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="CloseButtonBackground"
+                                        Property="Background"
+                                        Value="#EAE4DA" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="CloseButtonBackground"
+                                        Property="Background"
+                                        Value="#DDD6CC" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="CloseButtonBackground"
+                                        Property="Opacity"
+                                        Value="0.45" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Border x:Name="PopupShell"
+            Margin="12"
+            Padding="16"
+            Background="{StaticResource PopupBackgroundBrush}"
+            BorderBrush="{StaticResource PopupBorderBrush}"
+            BorderThickness="1"
+            CornerRadius="18">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="20"
+                              Direction="270"
+                              Opacity="0.20"
+                              ShadowDepth="5"
+                              Color="#66000000" />
+        </Border.Effect>
+
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <Grid Margin="4,1,4,13">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <Image x:Name="ResetWordmarkImage"
+                       Width="126"
+                       Height="48"
+                       Source="Assets/CodexAutoResetWordmark.png"
+                       Stretch="Uniform"
+                       AutomationProperties.Name="Codex Reset 딱지 워드마크" />
+
+                <Button x:Name="CloseButton"
+                        Grid.Column="2"
+                        Margin="10,0,0,0"
+                        VerticalAlignment="Center"
+                        Style="{StaticResource PopupCloseButtonStyle}"
+                        Content="×"
+                        AutomationProperties.Name="알림 확인 및 닫기"
+                        Click="OnCloseClick" />
+            </Grid>
+
+            <Border x:Name="NotificationCard"
+                    Grid.Row="1"
+                    Padding="20"
+                    Background="{StaticResource PopupCardBrush}"
+                    BorderBrush="{StaticResource PopupBorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="14">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel>
+                        <TextBlock x:Name="NotificationTitleText"
+                                   FontFamily="Segoe UI"
+                                   FontSize="19"
+                                   FontWeight="SemiBold"
+                                   Foreground="{StaticResource PopupTextBrush}"
+                                   TextWrapping="Wrap"
+                                   AutomationProperties.HeadingLevel="Level1"
+                                   AutomationProperties.LiveSetting="Polite" />
+                        <ScrollViewer MaxHeight="220"
+                                      Margin="0,11,0,0"
+                                      HorizontalScrollBarVisibility="Disabled"
+                                      VerticalScrollBarVisibility="Auto"
+                                      Focusable="False">
+                            <StackPanel>
+                                <TextBlock x:Name="NotificationMessageText"
+                                           FontFamily="Segoe UI"
+                                           FontSize="14"
+                                           LineHeight="21"
+                                           Foreground="{StaticResource PopupTextBrush}"
+                                           TextWrapping="Wrap"
+                                           AutomationProperties.LiveSetting="Polite" />
+                                <TextBlock x:Name="NotificationDetailText"
+                                           Margin="0,9,0,0"
+                                           FontFamily="Segoe UI"
+                                           FontSize="13"
+                                           LineHeight="20"
+                                           Foreground="{StaticResource PopupSecondaryTextBrush}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                        </ScrollViewer>
+                    </StackPanel>
+
+                    <Border Grid.Row="1"
+                            Height="1"
+                            Margin="0,18,0,16"
+                            Background="{StaticResource PopupBorderBrush}" />
+
+                    <TextBlock x:Name="ConfirmationFailureText"
+                               Grid.Row="2"
+                               Margin="0,0,0,12"
+                               FontFamily="Segoe UI"
+                               FontSize="13"
+                               LineHeight="19"
+                               Foreground="{StaticResource PopupTextBrush}"
+                               Text="알림을 닫은 상태를 저장하지 못했습니다. X를 다시 눌러 주세요."
+                               TextWrapping="Wrap"
+                               Visibility="Collapsed"
+                               AutomationProperties.LiveSetting="Polite" />
+
+                    <StackPanel x:Name="ActionPanel"
+                                Grid.Row="3"
+                                HorizontalAlignment="Right"
+                                Orientation="Horizontal">
+                        <Button x:Name="OpenAppButton"
+                                Style="{StaticResource PopupButtonStyle}"
+                                Content="CodexAutoReset 옵션 열기"
+                                AutomationProperties.Name="CodexAutoReset 옵션 열기"
+                                Click="OnOpenAppClick" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </Grid>
+    </Border>
+</Window>

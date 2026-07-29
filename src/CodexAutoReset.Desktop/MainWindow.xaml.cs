@@ -11,15 +11,20 @@ namespace CodexAutoReset.Desktop;
 public partial class MainWindow : Window
 {
     private readonly MainWindowViewModel viewModel;
+    private readonly Func<bool, Task>? usageResetNotificationSettingChanged;
     private readonly DispatcherTimer thresholdSaveTimer;
     private readonly DispatcherTimer pollIntervalSaveTimer;
     private bool thresholdSaveInProgress;
     private bool allowClose;
 
-    public MainWindow(MainWindowViewModel viewModel)
+    public MainWindow(
+        MainWindowViewModel viewModel,
+        Func<bool, Task>? usageResetNotificationSettingChanged = null)
     {
         InitializeComponent();
         this.viewModel = viewModel;
+        this.usageResetNotificationSettingChanged =
+            usageResetNotificationSettingChanged;
         DataContext = viewModel;
 
         thresholdSaveTimer = new DispatcherTimer(
@@ -193,7 +198,12 @@ public partial class MainWindow : Window
         RoutedEventArgs eventArgs)
     {
         var checkBox = (System.Windows.Controls.CheckBox)sender;
-        await viewModel.SetNotifyOnUsageResetAsync(checkBox.IsChecked == true);
+        var enabled = checkBox.IsChecked == true;
+        var saved = await viewModel.SetNotifyOnUsageResetAsync(enabled);
+        if (saved && usageResetNotificationSettingChanged is not null)
+        {
+            await usageResetNotificationSettingChanged(enabled);
+        }
     }
 
     private async Task SaveThresholdFromUiAsync()

@@ -149,7 +149,7 @@ public sealed class SettingsStoreTests
     [DataTestMethod]
     [DataRow(1)]
     [DataRow(7)]
-    [DataRow(100)]
+    [DataRow(99)]
     public void ThresholdBoundaryValuesAreValid(int threshold) =>
         JsonSettingsStore.Validate(GuardSettings.Default with
         {
@@ -158,6 +158,7 @@ public sealed class SettingsStoreTests
 
     [DataTestMethod]
     [DataRow(0)]
+    [DataRow(100)]
     [DataRow(101)]
     public void ThresholdOutsideRangeIsRejected(int threshold)
     {
@@ -167,6 +168,30 @@ public sealed class SettingsStoreTests
                 RemainingThresholdPercent = threshold,
             }));
         Assert.AreEqual("threshold_out_of_range", exception.ReasonCode);
+    }
+
+    [DataTestMethod]
+    [DataRow(1)]
+    [DataRow(2)]
+    [DataRow(3)]
+    [DataRow(4)]
+    public async Task VersionOneThroughFourThresholdOneHundredMigratesToNinetyNine(
+        int schemaVersion)
+    {
+        var json = schemaVersion switch
+        {
+            1 => ValidV1SettingsJson,
+            2 => ValidV2SettingsJson,
+            3 => ValidV3SettingsJson,
+            4 => ValidV4SettingsJson,
+            _ => throw new AssertFailedException(),
+        };
+        var document = JsonNode.Parse(json)!.AsObject();
+        document["remainingThresholdPercent"] = 100;
+
+        var settings = await LoadSettingsAsync(document.ToJsonString());
+
+        Assert.AreEqual(99, settings.RemainingThresholdPercent);
     }
 
     [DataTestMethod]

@@ -51,6 +51,7 @@ public sealed class SafeJsonlLogger
             "live_nothing_refresh_pending",
             "live_nothing_to_reset",
             "live_protocol_blocked",
+            "live_recovery_pending",
             "live_redeemed_refresh_pending",
             "live_retry_pending",
             "live_reset",
@@ -60,6 +61,9 @@ public sealed class SafeJsonlLogger
             "no_action",
             "nothingToReset",
             "reset",
+            "scheduled_reset_imminent",
+            "usage_reset_settling",
+            "usage_reset_state_unavailable",
         ],
         StringComparer.Ordinal);
 
@@ -117,6 +121,7 @@ public sealed class SafeJsonlLogger
             "secret_unavailable",
             "selected_window_ambiguous",
             "selected_window_missing",
+            "scheduled_reset_imminent",
             "settings_access_denied",
             "settings_empty",
             "settings_invalid_json",

@@ -8,6 +8,7 @@ public sealed class JsonLiveAttemptStore
     private const int MaximumRecords = 1_024;
     private const int MinimumRecentRecordRetention = 512;
     private const int MaximumDispatchCount = 32;
+    private const int MaximumPersistedThresholdPercent = 100;
     private const long ExpiredResetClockSkewSeconds = 60;
     private const int MaximumIntervalKeyLength = 256;
     private const int MaximumCreditIdLength = 4_096;
@@ -55,6 +56,24 @@ public sealed class JsonLiveAttemptStore
         {
             var state = await LoadStateAsync(cancellationToken).ConfigureAwait(false);
             return state.Attempts.SingleOrDefault(attempt => attempt.Phase != "terminal");
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    internal async Task<StoredLiveAttempt?> ReadRecoveryPendingAsync(
+        CancellationToken cancellationToken)
+    {
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var state = await LoadStateAsync(cancellationToken).ConfigureAwait(false);
+            return state.Attempts
+                .Where(IsSuccessfulRecoveryPending)
+                .OrderByDescending(attempt => attempt.CompletedAt)
+                .FirstOrDefault();
         }
         finally
         {
@@ -257,22 +276,49 @@ public sealed class JsonLiveAttemptStore
         }
     }
 
-    internal async Task MarkRefreshedAsync(
+    internal async Task<bool> MarkRefreshedAsync(
         DateTimeOffset observedAt,
+        double? weeklyRemainingPercent,
+        int currentThresholdPercent,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
+        if (currentThresholdPercent is < GuardSettings.MinimumThreshold
+            or > GuardSettings.MaximumThreshold)
+        {
+            throw new ArgumentOutOfRangeException(nameof(currentThresholdPercent));
+        }
+
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             var state = await LoadStateAsync(cancellationToken).ConfigureAwait(false);
             var changed = false;
+            var successfulRecoveryConfirmed = false;
             foreach (var attempt in state.Attempts.Where(attempt =>
                 attempt.Phase == "terminal"
                 && attempt.RefreshRequired
                 && attempt.CompletedAt is not null
-                && observedAt >= attempt.CompletedAt))
+                && observedAt > attempt.CompletedAt))
             {
+                if (IsSuccessfulOutcome(attempt.Outcome))
+                {
+                    var recoveryThreshold = Math.Max(
+                        Math.Min(
+                            attempt.ThresholdPercent,
+                            GuardSettings.MaximumThreshold),
+                        currentThresholdPercent);
+                    if (weeklyRemainingPercent is not { } remainingPercent
+                        || !double.IsFinite(remainingPercent)
+                        || remainingPercent is < 0d or > 100d
+                        || remainingPercent <= recoveryThreshold)
+                    {
+                        continue;
+                    }
+
+                    successfulRecoveryConfirmed = true;
+                }
+
                 attempt.RefreshRequired = false;
                 attempt.UpdatedAt = now;
                 changed = true;
@@ -282,6 +328,8 @@ public sealed class JsonLiveAttemptStore
             {
                 await SaveStateAsync(state, cancellationToken).ConfigureAwait(false);
             }
+
+            return successfulRecoveryConfirmed;
         }
         finally
         {
@@ -542,7 +590,7 @@ public sealed class JsonLiveAttemptStore
                         attempt.ResetsAt),
                     StringComparison.Ordinal)
                 || attempt.ThresholdPercent is < GuardSettings.MinimumThreshold
-                    or > GuardSettings.MaximumThreshold
+                    or > MaximumPersistedThresholdPercent
                 || attempt.NormalizedDurationMinutes != ExpectedDuration(triggerLimit)
                 || attempt.ResetsAt <= 0
                 || !Guid.TryParseExact(attempt.IdempotencyKey, "D", out var parsedId)
@@ -627,6 +675,14 @@ public sealed class JsonLiveAttemptStore
         !string.IsNullOrWhiteSpace(value)
         && value.Length <= MaximumProtectedCreditLength
         && IsBase64(value);
+
+    private static bool IsSuccessfulRecoveryPending(StoredLiveAttempt attempt) =>
+        attempt.Phase == "terminal"
+        && attempt.RefreshRequired
+        && IsSuccessfulOutcome(attempt.Outcome);
+
+    private static bool IsSuccessfulOutcome(string? outcome) =>
+        outcome is "reset" or "alreadyRedeemed";
 
     private static bool IsBase64(string value)
     {

@@ -279,6 +279,12 @@ public sealed class JsonSettingsStore
         bool automationEnabled,
         bool notifyOnUsageReset)
     {
+        // Version 1-4 settings previously allowed 100. Loading that value as 99
+        // preserves the user's conservative intent without allowing a fully
+        // recovered weekly window to remain eligible for another reset credit.
+        var migratedThresholdPercent = remainingThresholdPercent == 100
+            ? GuardSettings.MaximumThreshold
+            : remainingThresholdPercent;
         var uiLanguage = uiLanguageValue switch
         {
             "auto" => UiLanguage.Auto,
@@ -288,7 +294,7 @@ public sealed class JsonSettingsStore
         };
 
         var settings = new GuardSettings(
-            remainingThresholdPercent,
+            migratedThresholdPercent,
             pollIntervalMinutes,
             uiLanguage,
             startWithWindows,

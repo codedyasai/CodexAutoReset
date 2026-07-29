@@ -81,12 +81,31 @@ public sealed class LiveResetCoordinator
                     LiveAttemptBlockReason.ProtocolMismatch);
             }
 
-            await store.MarkRefreshedAsync(
+            var recoveryConfirmedThisCycle = await store.MarkRefreshedAsync(
                 snapshot.ObservedAt,
+                evaluation.Weekly?.RemainingPercent,
+                settings.RemainingThresholdPercent,
                 now,
                 cancellationToken).ConfigureAwait(false);
 
             var trigger = decisionEngine.EvaluateTrigger(settings, snapshot, now);
+            var recoveryPending = await store.ReadRecoveryPendingAsync(
+                cancellationToken).ConfigureAwait(false);
+            if (recoveryPending is not null)
+            {
+                return CreateResult(
+                    LiveResetCycleKind.DuplicateSuppressed,
+                    evaluation,
+                    JsonLiveAttemptStore.ToSnapshot(recoveryPending));
+            }
+
+            // A recovery observation rearms automation, but never dispatches an
+            // older pending intent during the same cycle that lifted the gate.
+            if (recoveryConfirmedThisCycle)
+            {
+                return CreateResult(LiveResetCycleKind.NoAction, evaluation);
+            }
+
             var activeAttempt = await store.ReadActiveAsync(cancellationToken)
                 .ConfigureAwait(false);
             if (activeAttempt is not null)
@@ -148,6 +167,7 @@ public sealed class LiveResetCoordinator
             }
 
             return await DispatchAsync(
+                settings,
                 evaluation,
                 prepared.Attempt,
                 now,
@@ -249,6 +269,7 @@ public sealed class LiveResetCoordinator
         }
 
         return await DispatchAsync(
+            settings,
             evaluation,
             activeAttempt,
             now,
@@ -256,6 +277,7 @@ public sealed class LiveResetCoordinator
     }
 
     private async Task<LiveResetCycleResult> DispatchAsync(
+        GuardSettings settings,
         EvaluationResult evaluation,
         StoredLiveAttempt attempt,
         DateTimeOffset now,
@@ -390,10 +412,21 @@ public sealed class LiveResetCoordinator
             }
         }
 
-        if (refreshed is not null)
+        if (refreshed is not null
+            && result.Outcome is not (
+                ConsumeResetCreditOutcome.Reset
+                or ConsumeResetCreditOutcome.AlreadyRedeemed))
         {
-            await store.MarkRefreshedAsync(
+            var refreshedEvaluation = decisionEngine.Evaluate(
+                settings,
+                refreshed,
+                timeProvider.GetUtcNow());
+            _ = await store.MarkRefreshedAsync(
                 refreshed.ObservedAt,
+                refreshed.ConsumeSchemaCompatible
+                    ? refreshedEvaluation.Weekly?.RemainingPercent
+                    : null,
+                settings.RemainingThresholdPercent,
                 timeProvider.GetUtcNow(),
                 CancellationToken.None).ConfigureAwait(false);
         }

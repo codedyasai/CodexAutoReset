@@ -120,6 +120,63 @@ public sealed class LiveAttemptStoreRetentionTests
     }
 
     [TestMethod]
+    public async Task LegacyThresholdOneHundredStateLoadsButCannotPrepareNewAttempt()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var path = Path.Combine(directory.Path, "live-state.json");
+        var legacyAttempt = TerminalAttempt(
+            0,
+            Now.AddHours(1).ToUnixTimeSeconds(),
+            refreshRequired: false);
+        legacyAttempt["thresholdPercent"] = 100;
+        await WriteStateAsync(path, new JsonArray(legacyAttempt));
+        var store = new JsonLiveAttemptStore(path);
+
+        var loaded = await store.ReadAsync(CancellationToken.None);
+        var resetAt = Now.AddDays(5).ToUnixTimeSeconds();
+        var exception = await Assert.ThrowsExceptionAsync<LiveStateException>(() =>
+            store.TryPrepareAsync(
+                new LiveAttemptCandidate(
+                    $"codex|weekly|10080|{resetAt}",
+                    100,
+                    10_080,
+                    resetAt),
+                "credit-id",
+                new FakeSecretProtector(),
+                Now,
+                CancellationToken.None));
+
+        Assert.AreEqual(100, loaded.Single().ThresholdPercent);
+        Assert.AreEqual("live_candidate_invalid", exception.ReasonCode);
+    }
+
+    [TestMethod]
+    public async Task LegacyThresholdOneHundredRecoveryRearmsAtFullRemaining()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var path = Path.Combine(directory.Path, "live-state.json");
+        var legacyAttempt = TerminalAttempt(
+            0,
+            Now.AddHours(1).ToUnixTimeSeconds(),
+            refreshRequired: true);
+        legacyAttempt["thresholdPercent"] = 100;
+        legacyAttempt["outcome"] = "reset";
+        await WriteStateAsync(path, new JsonArray(legacyAttempt));
+        var store = new JsonLiveAttemptStore(path);
+
+        var recovered = await store.MarkRefreshedAsync(
+            observedAt: Now,
+            weeklyRemainingPercent: 100,
+            currentThresholdPercent: GuardSettings.MaximumThreshold,
+            now: Now,
+            cancellationToken: CancellationToken.None);
+        var loaded = await store.ReadAsync(CancellationToken.None);
+
+        Assert.IsTrue(recovered);
+        Assert.IsFalse(loaded.Single().RefreshRequired);
+    }
+
+    [TestMethod]
     public async Task ForwardClockJumpRetainsRecentIntervalForLaterRollback()
     {
         using var directory = TemporaryDirectory.Create();
@@ -155,8 +212,10 @@ public sealed class LiveAttemptStoreRetentionTests
             CancellationToken.None);
         await store.MarkRefreshedAsync(
             jumpedNow.AddSeconds(2),
-            jumpedNow.AddSeconds(2),
-            CancellationToken.None);
+            weeklyRemainingPercent: 100,
+            currentThresholdPercent: 7,
+            now: jumpedNow.AddSeconds(2),
+            cancellationToken: CancellationToken.None);
 
         var retainedReset = firstReset + 1_023;
         var reconstructed = new JsonLiveAttemptStore(path);

@@ -7,6 +7,7 @@ public sealed class ResetDecisionEngine
     private const long WeeklyMinutes = 10_080;
     private const long DurationToleranceMinutes = 1;
     private const long ResetClockSkewSeconds = 60;
+    private const long MinimumResetLeadTimeSeconds = 5 * 60;
     private const long ResetUpperSlackSeconds = 300;
 
     public EvaluationResult Evaluate(
@@ -35,7 +36,7 @@ public sealed class ResetDecisionEngine
                 trigger.Weekly,
                 new GuardDecision(
                     DecisionKind.NoAction,
-                    DecisionReason.AboveThreshold,
+                    trigger.Reason,
                     triggerWindow,
                     null,
                     trigger.IntervalKey),
@@ -154,6 +155,16 @@ public sealed class ResetDecisionEngine
         }
 
         var intervalKey = BuildIntervalKey(bucketResult.Snapshot, weekly.Reading);
+        if (weekly.Reason == DecisionReason.ScheduledResetImminent)
+        {
+            return new TriggerEvaluation(
+                weekly.Reading,
+                weekly.Reading,
+                DecisionReason.ScheduledResetImminent,
+                intervalKey,
+                false);
+        }
+
         var thresholdReached = weekly.Reading.RemainingPercent
             <= settings.RemainingThresholdPercent;
 
@@ -250,7 +261,9 @@ public sealed class ResetDecisionEngine
                 selected.WindowDurationMins!.Value,
                 WeeklyMinutes,
                 resetsAt),
-            DecisionReason.SelectedWindowMissing);
+            resetsAt < nowUnix + MinimumResetLeadTimeSeconds
+                ? DecisionReason.ScheduledResetImminent
+                : DecisionReason.AboveThreshold);
     }
 
     private static EvaluationResult WithDecision(

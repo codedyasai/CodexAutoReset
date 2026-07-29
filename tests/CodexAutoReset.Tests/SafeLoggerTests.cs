@@ -144,6 +144,38 @@ public sealed class SafeLoggerTests
     }
 
     [DataTestMethod]
+    [DataRow("live_recovery_pending", "threshold_reached")]
+    [DataRow("usage_reset_settling", "threshold_reached")]
+    [DataRow("usage_reset_state_unavailable", "threshold_reached")]
+    [DataRow("scheduled_reset_imminent", "scheduled_reset_imminent")]
+    public async Task LoggerAcceptsSafetyOutcomes(
+        string outcome,
+        string reasonCode)
+    {
+        using var directory = TemporaryDirectory.Create();
+        var logger = new SafeJsonlLogger(directory.Path);
+
+        await logger.WriteAsync(
+            new SafeLogEvent(
+                DateTimeOffset.UtcNow,
+                "poll",
+                outcome,
+                reasonCode,
+                "weekly",
+                5,
+                7,
+                1,
+                false,
+                "desktop_monitor"),
+            CancellationToken.None);
+
+        var json = await File.ReadAllTextAsync(
+            Directory.GetFiles(directory.Path, "*.jsonl").Single());
+        StringAssert.Contains(json, $"\"outcome\":\"{outcome}\"");
+        StringAssert.Contains(json, $"\"reasonCode\":\"{reasonCode}\"");
+    }
+
+    [DataTestMethod]
     [DataRow(-0.1)]
     [DataRow(100.1)]
     [DataRow(double.NaN)]

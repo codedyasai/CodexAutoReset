@@ -4,7 +4,7 @@
 #define LegacyAppExecutable "CodexResetGuard.exe"
 
 #ifndef AppVersion
-  #define AppVersion "0.2.12"
+  #define AppVersion "0.2.13"
 #endif
 
 #ifndef PublishDir
@@ -467,7 +467,15 @@ begin
   if DeleteUserDataOnUninstall then
   begin
     CurrentDeleted := True;
-    if RegKeyExists(HKCU, 'Software\{#AppName}') then
+    if RegValueExists(
+      HKCU,
+      'Software\Microsoft\Windows\CurrentVersion\Run',
+      '{#AppName}') then
+    begin
+      Log('Preserving CodexAutoReset registry ownership because a startup '
+        + 'registration from another copy is still present.');
+    end
+    else if RegKeyExists(HKCU, 'Software\{#AppName}') then
     begin
       CurrentDeleted := RegDeleteKeyIncludingSubkeys(
         HKCU,
@@ -475,7 +483,15 @@ begin
     end;
 
     LegacyDeleted := True;
-    if RegKeyExists(HKCU, 'Software\{#LegacyAppName}') then
+    if RegValueExists(
+      HKCU,
+      'Software\Microsoft\Windows\CurrentVersion\Run',
+      '{#LegacyAppName}') then
+    begin
+      Log('Preserving legacy registry ownership because a startup '
+        + 'registration from another copy is still present.');
+    end
+    else if RegKeyExists(HKCU, 'Software\{#LegacyAppName}') then
     begin
       LegacyDeleted := RegDeleteKeyIncludingSubkeys(
         HKCU,

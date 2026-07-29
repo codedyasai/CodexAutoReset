@@ -25,7 +25,7 @@ public sealed record GuardSettings(
     bool NotifyOnUsageReset = true)
 {
     public const int MinimumThreshold = 1;
-    public const int MaximumThreshold = 100;
+    public const int MaximumThreshold = 99;
     public const int MinimumPollIntervalMinutes = 1;
     public const int MaximumPollIntervalMinutes = 60;
 
@@ -100,6 +100,7 @@ public enum DecisionReason
     NoCredits,
     CreditDetailsUnavailable,
     NoEligibleCredit,
+    ScheduledResetImminent,
 }
 
 public sealed record GuardDecision(

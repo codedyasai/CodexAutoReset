@@ -178,6 +178,88 @@ public sealed class DecisionEngineTests
         Assert.AreEqual(DecisionReason.InvalidResetTime, result.Decision.Reason);
     }
 
+    [DataTestMethod]
+    [DataRow(-60L)]
+    [DataRow(0L)]
+    [DataRow(299L)]
+    public void ScheduledResetWithinFiveMinuteGuardWindowDoesNotConsume(
+        long resetOffsetSeconds)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var snapshot = new RateLimitSnapshot(
+            "codex",
+            null,
+            new RateLimitWindow(20, 300, now.AddHours(4).ToUnixTimeSeconds()),
+            new RateLimitWindow(
+                93,
+                10_080,
+                now.AddSeconds(resetOffsetSeconds).ToUnixTimeSeconds()));
+
+        var trigger = engine.EvaluateTrigger(
+            GuardSettings.Default,
+            CreateLimits(now, snapshot),
+            now);
+        var result = engine.Evaluate(
+            GuardSettings.Default,
+            CreateLimits(now, snapshot),
+            now);
+
+        Assert.IsFalse(trigger.ThresholdReached);
+        Assert.AreEqual(DecisionReason.ScheduledResetImminent, trigger.Reason);
+        Assert.AreEqual(DecisionKind.NoAction, result.Decision.Kind);
+        Assert.AreEqual(
+            DecisionReason.ScheduledResetImminent,
+            result.Decision.Reason);
+        Assert.IsNotNull(result.Weekly);
+    }
+
+    [DataTestMethod]
+    [DataRow(300L)]
+    [DataRow(301L)]
+    public void ScheduledResetAtLeastFiveMinutesAwayCanConsume(
+        long resetOffsetSeconds)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var snapshot = new RateLimitSnapshot(
+            "codex",
+            null,
+            new RateLimitWindow(20, 300, now.AddHours(4).ToUnixTimeSeconds()),
+            new RateLimitWindow(
+                93,
+                10_080,
+                now.AddSeconds(resetOffsetSeconds).ToUnixTimeSeconds()));
+
+        var result = engine.Evaluate(
+            GuardSettings.Default,
+            CreateLimits(now, snapshot),
+            now);
+
+        Assert.AreEqual(DecisionKind.WouldConsume, result.Decision.Kind);
+        Assert.AreEqual(DecisionReason.ThresholdReached, result.Decision.Reason);
+    }
+
+    [TestMethod]
+    public void ScheduledResetOlderThanClockSkewStillFailsClosed()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var snapshot = new RateLimitSnapshot(
+            "codex",
+            null,
+            new RateLimitWindow(20, 300, now.AddHours(4).ToUnixTimeSeconds()),
+            new RateLimitWindow(
+                93,
+                10_080,
+                now.AddSeconds(-61).ToUnixTimeSeconds()));
+
+        var result = engine.Evaluate(
+            GuardSettings.Default,
+            CreateLimits(now, snapshot),
+            now);
+
+        Assert.AreEqual(DecisionKind.Blocked, result.Decision.Kind);
+        Assert.AreEqual(DecisionReason.InvalidResetTime, result.Decision.Reason);
+    }
+
     [TestMethod]
     public void CreditCountWithoutDetailsFailsClosed()
     {

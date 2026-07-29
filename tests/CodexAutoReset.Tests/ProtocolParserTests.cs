@@ -71,6 +71,7 @@ public sealed class ProtocolParserTests
         Assert.AreEqual(2L, parsed.ResetCredits!.AvailableCount);
         Assert.AreEqual("opaque-credit", parsed.ResetCredits.Credits![0].Id);
         Assert.IsTrue(parsed.RateLimitsByLimitId!.ContainsKey("codex"));
+        Assert.IsTrue(parsed.ConsumeSchemaCompatible);
     }
 
     [TestMethod]
@@ -121,18 +122,46 @@ public sealed class ProtocolParserTests
             DateTimeOffset.UtcNow);
 
         Assert.AreEqual("codex", parsed.LegacyRateLimits.LimitId);
+        Assert.IsTrue(parsed.ConsumeSchemaCompatible);
     }
 
     [DataTestMethod]
     [DataRow("{\"rateLimits\":{},\"unexpected\":true}")]
     [DataRow("{\"rateLimits\":{\"unexpected\":true}}")]
     [DataRow("{\"rateLimits\":{\"planType\":\"future_plan\"}}")]
-    [DataRow("{\"rateLimits\":{\"rateLimitReachedType\":7}}")]
-    [DataRow("{\"rateLimits\":{\"credits\":{\"hasCredits\":true,\"unlimited\":\"no\"}}}")]
+    [DataRow("{\"rateLimits\":{\"rateLimitReachedType\":\"future_limit_reason\"}}")]
     [DataRow("{\"rateLimits\":{\"individualLimit\":{\"limit\":\"1\",\"remainingPercent\":1.5,\"resetsAt\":2,\"used\":\"0\"}}}")]
+    [DataRow("{\"rateLimits\":{},\"rateLimitsByLimitId\":{\"codex\":{\"unexpected\":true}}}")]
     [DataRow("{\"rateLimits\":{},\"rateLimitResetCredits\":{\"availableCount\":1,\"unexpected\":true}}")]
     [DataRow("{\"rateLimits\":{},\"rateLimitResetCredits\":{\"availableCount\":1,\"credits\":[{\"id\":\"id\",\"resetType\":\"future\",\"status\":\"available\",\"grantedAt\":1}]}}")]
-    public void UnknownOrMalformedStableFieldsFailClosed(string json)
+    [DataRow("{\"rateLimits\":{},\"rateLimitResetCredits\":{\"availableCount\":1,\"credits\":[{\"id\":\"id\",\"resetType\":\"codexRateLimits\",\"status\":\"future\",\"grantedAt\":1}]}}")]
+    [DataRow("{\"rateLimits\":{\"primary\":{\"usedPercent\":25,\"futureWindowField\":true}}}")]
+    [DataRow("{\"rateLimits\":{\"credits\":{\"hasCredits\":true,\"unlimited\":false,\"futureCreditsField\":true}}}")]
+    [DataRow("{\"rateLimits\":{\"individualLimit\":{\"limit\":\"1\",\"remainingPercent\":1,\"resetsAt\":2,\"used\":\"0\",\"futureSpendField\":true}}}")]
+    [DataRow("{\"rateLimits\":{},\"rateLimitResetCredits\":{\"availableCount\":1,\"credits\":[{\"id\":\"id\",\"resetType\":\"codexRateLimits\",\"status\":\"available\",\"grantedAt\":1,\"futureCreditField\":true}]}}")]
+    public void AdditiveOrUnrecognizedReadFieldsRemainReadableButDisableMutation(
+        string json)
+    {
+        using var document = JsonDocument.Parse(json);
+
+        var parsed = AppServerProtocolParser.ParseRateLimits(
+            document.RootElement,
+            DateTimeOffset.UtcNow);
+
+        Assert.IsNotNull(parsed.LegacyRateLimits);
+        Assert.IsFalse(parsed.ConsumeSchemaCompatible);
+    }
+
+    [DataTestMethod]
+    [DataRow("{\"rateLimits\":{\"rateLimitReachedType\":7}}")]
+    [DataRow("{\"rateLimits\":{\"primary\":{}}}")]
+    [DataRow("{\"rateLimits\":{\"credits\":{\"hasCredits\":true,\"unlimited\":\"no\"}}}")]
+    [DataRow("{\"rateLimits\":{\"individualLimit\":{\"limit\":\"1\",\"remainingPercent\":\"1\",\"resetsAt\":2,\"used\":\"0\"}}}")]
+    [DataRow("{\"rateLimits\":{},\"rateLimitResetCredits\":{}}")]
+    [DataRow("{\"rateLimits\":{},\"rateLimitResetCredits\":{\"availableCount\":\"1\"}}")]
+    [DataRow("{\"rateLimits\":{},\"rateLimitResetCredits\":{\"availableCount\":1,\"credits\":[{\"id\":\"id\",\"resetType\":\"codexRateLimits\",\"status\":\"available\"}]}}")]
+    [DataRow("{\"rateLimits\":{},\"rateLimitResetCredits\":{\"availableCount\":1,\"credits\":[{\"id\":\"id\",\"resetType\":7,\"status\":\"available\",\"grantedAt\":1}]}}")]
+    public void WrongReadFieldTypesStillFailClosed(string json)
     {
         using var document = JsonDocument.Parse(json);
 
@@ -141,7 +170,9 @@ public sealed class ProtocolParserTests
                 document.RootElement,
                 DateTimeOffset.UtcNow));
 
-        Assert.AreEqual(AppServerFailureCategory.InvalidResponse, exception.Category);
+        Assert.AreEqual(
+            AppServerFailureCategory.InvalidResponse,
+            exception.Category);
     }
 
     [DataTestMethod]
@@ -259,11 +290,39 @@ public sealed class ProtocolParserTests
     }
 
     [DataTestMethod]
-    [DataRow("25.5")]
-    [DataRow("25.0")]
+    [DataRow("25.5", 25.5)]
+    [DataRow("25.0", 25.0)]
+    public void FiniteFractionalUsedPercentRemainsReadableButDisablesMutation(
+        string usedPercentJson,
+        double expected)
+    {
+        using var document = JsonDocument.Parse(
+            $$"""
+            {
+              "rateLimits": {
+                "primary": {
+                  "usedPercent": {{usedPercentJson}}
+                }
+              }
+            }
+            """);
+
+        var parsed = AppServerProtocolParser.ParseRateLimits(
+            document.RootElement,
+            DateTimeOffset.UtcNow);
+
+        Assert.AreEqual(expected, parsed.LegacyRateLimits.Primary!.UsedPercent);
+        Assert.IsFalse(parsed.ConsumeSchemaCompatible);
+    }
+
+    [DataTestMethod]
     [DataRow("2147483648")]
     [DataRow("\"25\"")]
-    public void UsedPercentRequiresStableSchemaInt32(string usedPercentJson)
+    [DataRow("-0.1")]
+    [DataRow("100.1")]
+    [DataRow("1e400")]
+    public void InvalidOrOutOfRangeUsedPercentFailsClosed(
+        string usedPercentJson)
     {
         using var document = JsonDocument.Parse(
             $$"""
@@ -339,6 +398,26 @@ public sealed class ProtocolParserTests
             "codex_auto_reset/0.144.5 (Windows 10.0.26200; x86_64) unknown (codex_auto_reset; 0.1.0)");
 
         Assert.IsTrue(
+            AppServerProtocolParser.ValidateInitializeResult(
+                response.RootElement,
+                "0.1.0"));
+    }
+
+    [TestMethod]
+    public void AdditiveInitializeFieldKeepsReadsAvailableButDisablesMutation()
+    {
+        using var response = JsonDocument.Parse(
+            """
+            {
+              "codexHome": "private-path-not-logged",
+              "platformFamily": "windows",
+              "platformOs": "windows",
+              "userAgent": "Codex Desktop/0.144.5 (Windows 10.0.26200; x86_64) unknown (codex_auto_reset; 0.1.0)",
+              "futureCapability": true
+            }
+            """);
+
+        Assert.IsFalse(
             AppServerProtocolParser.ValidateInitializeResult(
                 response.RootElement,
                 "0.1.0"));

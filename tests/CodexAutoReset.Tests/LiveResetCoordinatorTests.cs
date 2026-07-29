@@ -22,14 +22,16 @@ public sealed class LiveResetCoordinatorTests
     [DataRow(ConsumeResetCreditOutcome.AlreadyRedeemed)]
     [DataRow(ConsumeResetCreditOutcome.NothingToReset)]
     [DataRow(ConsumeResetCreditOutcome.NoCredit)]
-    public async Task EveryKnownOutcomeBecomesTerminalAndRefreshes(
+    public async Task EveryKnownOutcomeBecomesTerminalAndSuccessfulOutcomeAwaitsRecovery(
         ConsumeResetCreditOutcome outcome)
     {
         using var directory = TemporaryDirectory.Create();
         var client = new FakeAccountRateLimitClient
         {
             ConsumeHandler = (_, _) => Task.FromResult(new ConsumeResetCreditResult(outcome)),
-            ReadHandler = _ => Task.FromResult(CreateLimits(Now.AddSeconds(3))),
+            ReadHandler = _ => Task.FromResult(CreateLimits(
+                Now.AddSeconds(3),
+                weeklyUsedPercent: 0)),
         };
         var coordinator = CreateCoordinator(directory, client);
 
@@ -42,7 +44,10 @@ public sealed class LiveResetCoordinatorTests
         Assert.AreEqual(LiveResetCycleKind.Completed, result.Kind);
         Assert.AreEqual(outcome, result.Outcome);
         Assert.IsTrue(result.ConsumeAttempted);
-        Assert.IsFalse(result.RequiresRefresh);
+        var recoveryExpected = outcome is
+            ConsumeResetCreditOutcome.Reset
+            or ConsumeResetCreditOutcome.AlreadyRedeemed;
+        Assert.AreEqual(recoveryExpected, result.RequiresRefresh);
         Assert.IsNotNull(result.RefreshedRateLimits);
         Assert.AreEqual(1, client.ConsumeRequests.Count);
         Assert.AreEqual("opaque-credit-sentinel", client.ConsumeRequests[0].CreditId);
@@ -55,7 +60,7 @@ public sealed class LiveResetCoordinatorTests
             CancellationToken.None));
         Assert.AreEqual(LiveAttemptPhase.Terminal, attempt.Phase);
         Assert.AreEqual(outcome, attempt.Outcome);
-        Assert.IsFalse(attempt.RefreshRequired);
+        Assert.AreEqual(recoveryExpected, attempt.RefreshRequired);
     }
 
     [TestMethod]
@@ -219,7 +224,7 @@ public sealed class LiveResetCoordinatorTests
     }
 
     [TestMethod]
-    public async Task CancellationAfterResponseCannotSkipTerminalPersistence()
+    public async Task CancellationAfterResponseKeepsRecoveryGateAcrossChangedInterval()
     {
         using var directory = TemporaryDirectory.Create();
         using var cancellation = new CancellationTokenSource();
@@ -256,8 +261,250 @@ public sealed class LiveResetCoordinatorTests
                 weeklyResetsAt: Now.AddDays(6).ToUnixTimeSeconds()),
             Now,
             CancellationToken.None);
-        Assert.AreEqual(LiveResetCycleKind.Completed, later.Kind);
+        Assert.AreEqual(LiveResetCycleKind.DuplicateSuppressed, later.Kind);
+        Assert.IsTrue(later.RequiresRefresh);
+        Assert.AreEqual(1, client.ConsumeRequests.Count);
+    }
+
+    [DataTestMethod]
+    [DataRow(ConsumeResetCreditOutcome.Reset)]
+    [DataRow(ConsumeResetCreditOutcome.AlreadyRedeemed)]
+    public async Task SuccessfulOutcomeBlocksChangedIntervalWhileUsageHasNotRecovered(
+        ConsumeResetCreditOutcome outcome)
+    {
+        using var directory = TemporaryDirectory.Create();
+        var client = SuccessfulClient();
+        client.ConsumeHandler = (_, _) => Task.FromResult(
+            new ConsumeResetCreditResult(outcome));
+        client.ReadHandler = _ => Task.FromException<AccountRateLimits>(
+            new RetryableException());
+        var coordinator = CreateCoordinator(
+            directory,
+            client,
+            classifier: new FixedFailureClassifier(
+                LiveResetFailureDisposition.Retryable));
+        var credits = CreateCredits("first-credit", "second-credit");
+
+        var completed = await coordinator.ExecuteAsync(
+            LiveSettings(),
+            CreateLimits(Now, credits: credits),
+            Now,
+            CancellationToken.None);
+        var suppressed = await coordinator.ExecuteAsync(
+            LiveSettings(),
+            CreateLimits(
+                Now.AddMinutes(2),
+                observedAt: Now.AddMinutes(2),
+                weeklyResetsAt: Now.AddDays(6).ToUnixTimeSeconds(),
+                credits: credits),
+            Now,
+            CancellationToken.None);
+
+        Assert.AreEqual(LiveResetCycleKind.Completed, completed.Kind);
+        Assert.IsTrue(completed.RequiresRefresh);
+        Assert.AreEqual(LiveResetCycleKind.DuplicateSuppressed, suppressed.Kind);
+        Assert.IsTrue(suppressed.RequiresRefresh);
+        Assert.AreEqual(1, client.ConsumeRequests.Count);
+        Assert.AreEqual("first-credit", client.ConsumeRequests[0].CreditId);
+    }
+
+    [TestMethod]
+    public async Task PostConsumeHighReadRequiresSeparateRecoveryCycleBeforeRearm()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var client = SuccessfulClient();
+        var coordinator = CreateCoordinator(directory, client);
+        var firstCredits = CreateCredits("first-credit", "second-credit");
+        var secondCredit = CreateCredits("second-credit");
+        var nextResetAt = Now.AddDays(6).ToUnixTimeSeconds();
+
+        var completed = await coordinator.ExecuteAsync(
+            LiveSettings(),
+            CreateLimits(Now, credits: firstCredits),
+            Now,
+            CancellationToken.None);
+        var lowAfterPostRead = await coordinator.ExecuteAsync(
+            LiveSettings(),
+            CreateLimits(
+                Now.AddMinutes(2),
+                observedAt: Now.AddMinutes(2),
+                weeklyResetsAt: nextResetAt,
+                credits: secondCredit),
+            Now,
+            CancellationToken.None);
+        var regularRecoveryCycle = await coordinator.ExecuteAsync(
+            LiveSettings(),
+            CreateLimits(
+                Now.AddMinutes(3),
+                observedAt: Now.AddMinutes(3),
+                weeklyResetsAt: nextResetAt,
+                weeklyUsedPercent: 0,
+                credits: secondCredit),
+            Now,
+            CancellationToken.None);
+        var actualLaterLowUsage = await coordinator.ExecuteAsync(
+            LiveSettings(),
+            CreateLimits(
+                Now.AddMinutes(4),
+                observedAt: Now.AddMinutes(4),
+                weeklyResetsAt: nextResetAt,
+                credits: secondCredit),
+            Now,
+            CancellationToken.None);
+
+        Assert.AreEqual(LiveResetCycleKind.Completed, completed.Kind);
+        Assert.IsTrue(completed.RequiresRefresh);
+        Assert.AreEqual(
+            LiveResetCycleKind.DuplicateSuppressed,
+            lowAfterPostRead.Kind);
+        Assert.AreEqual(LiveResetCycleKind.NoAction, regularRecoveryCycle.Kind);
+        Assert.AreEqual(LiveResetCycleKind.Completed, actualLaterLowUsage.Kind);
         Assert.AreEqual(2, client.ConsumeRequests.Count);
+        Assert.AreEqual("first-credit", client.ConsumeRequests[0].CreditId);
+        Assert.AreEqual("second-credit", client.ConsumeRequests[1].CreditId);
+    }
+
+    [DataTestMethod]
+    [DataRow(ConsumeResetCreditOutcome.NothingToReset)]
+    [DataRow(ConsumeResetCreditOutcome.NoCredit)]
+    public async Task NoEffectOutcomeDoesNotCreateRecoveryGate(
+        ConsumeResetCreditOutcome outcome)
+    {
+        using var directory = TemporaryDirectory.Create();
+        var client = SuccessfulClient();
+        client.ConsumeHandler = (_, _) => Task.FromResult(
+            new ConsumeResetCreditResult(outcome));
+        client.ReadHandler = _ => Task.FromException<AccountRateLimits>(
+            new RetryableException());
+        var coordinator = CreateCoordinator(
+            directory,
+            client,
+            classifier: new FixedFailureClassifier(
+                LiveResetFailureDisposition.Retryable));
+
+        _ = await coordinator.ExecuteAsync(
+            LiveSettings(),
+            CreateLimits(
+                Now,
+                credits: CreateCredits("first-credit", "second-credit")),
+            Now,
+            CancellationToken.None);
+        var nextInterval = await coordinator.ExecuteAsync(
+            LiveSettings(),
+            CreateLimits(
+                Now.AddMinutes(2),
+                observedAt: Now.AddMinutes(2),
+                weeklyResetsAt: Now.AddDays(6).ToUnixTimeSeconds(),
+                credits: CreateCredits("second-credit")),
+            Now,
+            CancellationToken.None);
+
+        Assert.AreEqual(LiveResetCycleKind.Completed, nextInterval.Kind);
+        Assert.AreEqual(2, client.ConsumeRequests.Count);
+        Assert.AreEqual("second-credit", client.ConsumeRequests[1].CreditId);
+    }
+
+    [TestMethod]
+    public async Task RecoveryGateUsesHigherCurrentThresholdAndRearmsAfterRecoveryCycle()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var client = SuccessfulClient();
+        client.ReadHandler = _ => Task.FromException<AccountRateLimits>(
+            new RetryableException());
+        var coordinator = CreateCoordinator(
+            directory,
+            client,
+            classifier: new FixedFailureClassifier(
+                LiveResetFailureDisposition.Retryable));
+        var firstCredits = CreateCredits("first-credit", "second-credit");
+        var secondCredit = CreateCredits("second-credit");
+
+        _ = await coordinator.ExecuteAsync(
+            LiveSettings(),
+            CreateLimits(Now, credits: firstCredits),
+            Now,
+            CancellationToken.None);
+
+        var raisedThresholdSettings = LiveSettings() with
+        {
+            RemainingThresholdPercent = 50,
+        };
+        var belowCurrentThreshold = await coordinator.ExecuteAsync(
+            raisedThresholdSettings,
+            CreateLimits(
+                Now.AddMinutes(2),
+                observedAt: Now.AddMinutes(2),
+                weeklyResetsAt: Now.AddDays(6).ToUnixTimeSeconds(),
+                weeklyUsedPercent: 60,
+                credits: secondCredit),
+            Now,
+            CancellationToken.None);
+        var recoveryCycle = await coordinator.ExecuteAsync(
+            raisedThresholdSettings,
+            CreateLimits(
+                Now.AddMinutes(3),
+                observedAt: Now.AddMinutes(3),
+                weeklyResetsAt: Now.AddDays(6).ToUnixTimeSeconds(),
+                weeklyUsedPercent: 40,
+                credits: secondCredit),
+            Now,
+            CancellationToken.None);
+        var afterRearm = await coordinator.ExecuteAsync(
+            raisedThresholdSettings,
+            CreateLimits(
+                Now.AddMinutes(4),
+                observedAt: Now.AddMinutes(4),
+                weeklyResetsAt: Now.AddDays(6).ToUnixTimeSeconds(),
+                weeklyUsedPercent: 60,
+                credits: secondCredit),
+            Now,
+            CancellationToken.None);
+
+        Assert.AreEqual(
+            LiveResetCycleKind.DuplicateSuppressed,
+            belowCurrentThreshold.Kind);
+        Assert.AreEqual(LiveResetCycleKind.NoAction, recoveryCycle.Kind);
+        Assert.AreEqual(LiveResetCycleKind.Completed, afterRearm.Kind);
+        Assert.AreEqual(2, client.ConsumeRequests.Count);
+        Assert.AreEqual("first-credit", client.ConsumeRequests[0].CreditId);
+        Assert.AreEqual("second-credit", client.ConsumeRequests[1].CreditId);
+    }
+
+    [TestMethod]
+    public async Task RecoveryGateSurvivesCoordinatorRestart()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var initialClient = SuccessfulClient();
+        initialClient.ReadHandler = _ => Task.FromException<AccountRateLimits>(
+            new RetryableException());
+        var first = CreateCoordinator(
+            directory,
+            initialClient,
+            classifier: new FixedFailureClassifier(
+                LiveResetFailureDisposition.Retryable));
+        var credits = CreateCredits("first-credit", "second-credit");
+
+        _ = await first.ExecuteAsync(
+            LiveSettings(),
+            CreateLimits(Now, credits: credits),
+            Now,
+            CancellationToken.None);
+
+        var restartedClient = SuccessfulClient();
+        var restarted = CreateCoordinator(directory, restartedClient);
+        var result = await restarted.ExecuteAsync(
+            LiveSettings(),
+            CreateLimits(
+                Now.AddMinutes(2),
+                observedAt: Now.AddMinutes(2),
+                weeklyResetsAt: Now.AddDays(6).ToUnixTimeSeconds(),
+                credits: credits),
+            Now.AddMinutes(2),
+            CancellationToken.None);
+
+        Assert.AreEqual(LiveResetCycleKind.DuplicateSuppressed, result.Kind);
+        Assert.IsTrue(result.RequiresRefresh);
+        Assert.AreEqual(0, restartedClient.ConsumeRequests.Count);
     }
 
     [TestMethod]
@@ -701,6 +948,18 @@ public sealed class LiveResetCoordinatorTests
         Assert.IsTrue(result.RequiresRefresh);
         Assert.AreEqual(LiveAttemptPhase.Terminal, result.Attempt!.Phase);
         Assert.AreEqual(ConsumeResetCreditOutcome.Reset, result.Attempt.Outcome);
+
+        var suppressed = await coordinator.ExecuteAsync(
+            LiveSettings(),
+            CreateLimits(
+                Now.AddMinutes(2),
+                observedAt: Now.AddMinutes(2),
+                weeklyResetsAt: Now.AddDays(6).ToUnixTimeSeconds()),
+            Now,
+            CancellationToken.None);
+
+        Assert.AreEqual(LiveResetCycleKind.DuplicateSuppressed, suppressed.Kind);
+        Assert.AreEqual(1, client.ConsumeRequests.Count);
     }
 
     [DataTestMethod]
@@ -960,7 +1219,9 @@ public sealed class LiveResetCoordinatorTests
     {
         ConsumeHandler = (_, _) => Task.FromResult(new ConsumeResetCreditResult(
             ConsumeResetCreditOutcome.Reset)),
-        ReadHandler = _ => Task.FromResult(CreateLimits(Now.AddSeconds(3))),
+        ReadHandler = _ => Task.FromResult(CreateLimits(
+            Now.AddSeconds(3),
+            weeklyUsedPercent: 0)),
     };
 
     private static GuardSettings LiveSettings() => GuardSettings.Default with
@@ -968,10 +1229,22 @@ public sealed class LiveResetCoordinatorTests
         AutomationEnabled = true,
     };
 
+    private static IReadOnlyList<ResetCredit> CreateCredits(params string[] ids) =>
+        ids.Select((id, index) => new ResetCredit(
+            id,
+            "codexRateLimits",
+            "available",
+            Now.AddDays(-1).ToUnixTimeSeconds(),
+            Now.AddDays(index + 1).ToUnixTimeSeconds(),
+            null,
+            null)).ToArray();
+
     private static AccountRateLimits CreateLimits(
         DateTimeOffset now,
         DateTimeOffset? observedAt = null,
-        long? weeklyResetsAt = null)
+        long? weeklyResetsAt = null,
+        double weeklyUsedPercent = 93,
+        IReadOnlyList<ResetCredit>? credits = null)
     {
         var snapshot = new RateLimitSnapshot(
             "codex",
@@ -981,24 +1254,26 @@ public sealed class LiveResetCoordinatorTests
                 300,
                 now.AddHours(4).ToUnixTimeSeconds()),
             new RateLimitWindow(
-                93,
+                weeklyUsedPercent,
                 10_080,
                 weeklyResetsAt ?? Now.AddDays(5).ToUnixTimeSeconds()));
+        var availableCredits = credits ??
+        [
+            new ResetCredit(
+                "opaque-credit-sentinel",
+                "codexRateLimits",
+                "available",
+                Now.AddDays(-1).ToUnixTimeSeconds(),
+                Now.AddDays(2).ToUnixTimeSeconds(),
+                null,
+                null),
+        ];
         return new AccountRateLimits(
             snapshot,
             new Dictionary<string, RateLimitSnapshot> { ["codex"] = snapshot },
             new ResetCreditSummary(
-                1,
-                [
-                    new ResetCredit(
-                        "opaque-credit-sentinel",
-                        "codexRateLimits",
-                        "available",
-                        Now.AddDays(-1).ToUnixTimeSeconds(),
-                        Now.AddDays(2).ToUnixTimeSeconds(),
-                        null,
-                        null),
-                ]),
+                availableCredits.Count,
+                availableCredits),
             observedAt ?? now);
     }
 

@@ -184,6 +184,13 @@ public sealed class MainWindowRenderingTests
                     string.Equals(GetButtonText(button), "codex.exe 선택", StringComparison.Ordinal)));
                 Assert.IsFalse(buttons.Any(button =>
                     string.Equals(GetButtonText(button), "자동으로 찾기", StringComparison.Ordinal)));
+                Assert.IsTrue(FindVisualChildren<TextBlock>(window).Any(textBlock =>
+                    string.Equals(
+                        textBlock.Text,
+                        "주간 잔여량이 이 값 이하일 때 초기화 조건을 확인합니다. (1~99%)",
+                        StringComparison.Ordinal)));
+                Assert.IsFalse(FindVisualChildren<TextBlock>(window).Any(textBlock =>
+                    textBlock.Text?.Contains("1~100%", StringComparison.Ordinal) == true));
 
                 var compatibilitySnapshot =
                     MonitorSnapshot.Waiting(GuardSettings.Default) with

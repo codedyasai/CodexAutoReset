@@ -83,6 +83,38 @@ public sealed class UsageResetNotificationCoordinatorTests
     }
 
     [TestMethod]
+    public async Task TransientStateReadFailureKeepsVisiblePopupConfirmable()
+    {
+        using var directory = TestDirectory.Create();
+        var tracker = await CreateTrackerWithPendingAsync(directory);
+        var presenter = new FakePresenter();
+        await using var coordinator = new UsageResetNotificationCoordinator(
+            tracker,
+            presenter);
+        await coordinator.InitializeAsync(
+            enabled: true,
+            CancellationToken.None);
+
+        using (var lockedState = new FileStream(
+            tracker.Path,
+            FileMode.Open,
+            FileAccess.ReadWrite,
+            FileShare.None))
+        {
+            await coordinator.RefreshAsync(CancellationToken.None);
+            Assert.IsTrue(presenter.IsVisible);
+            Assert.AreEqual(1, presenter.ShowCount);
+        }
+
+        Assert.IsTrue(await presenter.ConfirmAsync());
+        Assert.IsFalse(presenter.IsVisible);
+        Assert.AreEqual(
+            0,
+            (await tracker.LoadPendingNotificationsAsync(
+                CancellationToken.None)).Count);
+    }
+
+    [TestMethod]
     public async Task DisablingSuppressesVisibleAndQueuedNotifications()
     {
         using var directory = TestDirectory.Create();

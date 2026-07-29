@@ -72,6 +72,44 @@ public sealed class JsonWeeklyUsageResetTrackerTests
     }
 
     [TestMethod]
+    public async Task SettlementWindowPersistsAcrossTrackerRestart()
+    {
+        using var directory = TestDirectory.Create();
+        var firstTracker = Tracker(directory);
+        var detectedAt = Now.AddMinutes(1);
+        _ = await firstTracker.ObserveAsync(
+            Observation(25, Now.AddDays(2), Now),
+            CancellationToken.None);
+        var detected = await firstTracker.ObserveAsync(
+            Observation(5, Now.AddDays(9), detectedAt),
+            CancellationToken.None);
+
+        Assert.AreEqual(
+            WeeklyUsageResetTrackingStatus.ResetDetected,
+            detected.Status);
+        Assert.AreEqual(
+            UsageResetSettlementState.Active,
+            await firstTracker.GetSettlementStateAsync(
+                detectedAt,
+                TimeSpan.FromMinutes(5),
+                CancellationToken.None));
+
+        var reconstructed = Tracker(directory);
+        Assert.AreEqual(
+            UsageResetSettlementState.Active,
+            await reconstructed.GetSettlementStateAsync(
+                detectedAt.AddMinutes(4),
+                TimeSpan.FromMinutes(5),
+                CancellationToken.None));
+        Assert.AreEqual(
+            UsageResetSettlementState.Inactive,
+            await reconstructed.GetSettlementStateAsync(
+                detectedAt.AddMinutes(5),
+                TimeSpan.FromMinutes(5),
+                CancellationToken.None));
+    }
+
+    [TestMethod]
     public async Task PersistedRecoveryEpisodeMergesRollingScheduleAndSaturationJitter()
     {
         using var directory = TestDirectory.Create();
@@ -371,7 +409,7 @@ public sealed class JsonWeeklyUsageResetTrackerTests
     }
 
     [TestMethod]
-    public async Task PendingAutomaticCreditExpiresAtOldScheduledReset()
+    public async Task PendingAutomaticCreditKeepsAttributionThroughScheduledResetGrace()
     {
         using var directory = TestDirectory.Create();
         var resetAt = Now.AddMinutes(5);
@@ -385,6 +423,31 @@ public sealed class JsonWeeklyUsageResetTrackerTests
 
         var result = await tracker.ObserveAsync(
             Observation(100, Now.AddDays(7), resetAt.AddSeconds(1)),
+            CancellationToken.None);
+
+        Assert.AreEqual(
+            WeeklyUsageResetTrackingStatus.ResetDetected,
+            result.Status);
+        Assert.AreEqual(
+            WeeklyUsageResetKind.AutomaticCredit,
+            result.Detection?.Kind);
+    }
+
+    [TestMethod]
+    public async Task PendingAutomaticCreditExpiresAfterScheduledResetGrace()
+    {
+        using var directory = TestDirectory.Create();
+        var resetAt = Now.AddMinutes(5);
+        var tracker = Tracker(directory);
+        _ = await tracker.ObserveAsync(
+            Observation(5, resetAt, Now),
+            CancellationToken.None);
+        _ = await tracker.MarkAutomaticCreditSucceededAsync(
+            Now.AddMinutes(1),
+            CancellationToken.None);
+
+        var result = await tracker.ObserveAsync(
+            Observation(100, Now.AddDays(7), resetAt.AddMinutes(11)),
             CancellationToken.None);
 
         Assert.AreEqual(
@@ -470,7 +533,7 @@ public sealed class JsonWeeklyUsageResetTrackerTests
     }
 
     [TestMethod]
-    public async Task CorruptStateSelfHealsAsBaselineWithoutDetection()
+    public async Task CorruptStateSelfHealsButFailsClosedForCurrentCycle()
     {
         using var directory = TestDirectory.Create();
         var path = Path.Combine(directory.Path, "usage-reset-state.json");
@@ -483,7 +546,7 @@ public sealed class JsonWeeklyUsageResetTrackerTests
             CancellationToken.None);
 
         Assert.AreEqual(
-            WeeklyUsageResetTrackingStatus.BaselineEstablished,
+            WeeklyUsageResetTrackingStatus.StateUnavailable,
             result.Status);
         Assert.IsNull(result.Detection);
         Assert.AreNotEqual(corruptContent, await File.ReadAllTextAsync(path));
@@ -499,7 +562,7 @@ public sealed class JsonWeeklyUsageResetTrackerTests
     }
 
     [TestMethod]
-    public async Task OversizedStateSelfHealsWithoutDetection()
+    public async Task OversizedStateSelfHealsButFailsClosedForCurrentCycle()
     {
         using var directory = TestDirectory.Create();
         var path = Path.Combine(directory.Path, "usage-reset-state.json");
@@ -511,14 +574,14 @@ public sealed class JsonWeeklyUsageResetTrackerTests
             CancellationToken.None);
 
         Assert.AreEqual(
-            WeeklyUsageResetTrackingStatus.BaselineEstablished,
+            WeeklyUsageResetTrackingStatus.StateUnavailable,
             result.Status);
         Assert.IsNull(result.Detection);
         Assert.IsTrue(new FileInfo(path).Length < 64 * 1024);
     }
 
     [TestMethod]
-    public async Task UnsupportedSchemaSelfHealsWithoutDetection()
+    public async Task UnsupportedSchemaIsPreservedAndFailsClosed()
     {
         using var directory = TestDirectory.Create();
         var path = Path.Combine(directory.Path, "usage-reset-state.json");
@@ -536,6 +599,7 @@ public sealed class JsonWeeklyUsageResetTrackerTests
               "pendingAutomaticCredit": null
             }
             """);
+        var original = await File.ReadAllTextAsync(path);
         var tracker = new JsonWeeklyUsageResetTracker(path);
 
         var result = await tracker.ObserveAsync(
@@ -543,13 +607,20 @@ public sealed class JsonWeeklyUsageResetTrackerTests
             CancellationToken.None);
 
         Assert.AreEqual(
-            WeeklyUsageResetTrackingStatus.BaselineEstablished,
+            WeeklyUsageResetTrackingStatus.StateUnavailable,
             result.Status);
         Assert.IsNull(result.Detection);
+        Assert.AreEqual(original, await File.ReadAllTextAsync(path));
+        Assert.AreEqual(
+            UsageResetSettlementState.StateUnavailable,
+            await tracker.GetSettlementStateAsync(
+                Now,
+                TimeSpan.FromMinutes(5),
+                CancellationToken.None));
     }
 
     [TestMethod]
-    public async Task NullNotificationEventSelfHealsWithoutDetection()
+    public async Task NullNotificationEventSelfHealsButFailsClosedForCurrentCycle()
     {
         using var directory = TestDirectory.Create();
         var path = Path.Combine(directory.Path, "usage-reset-state.json");
@@ -575,7 +646,7 @@ public sealed class JsonWeeklyUsageResetTrackerTests
             CancellationToken.None);
 
         Assert.AreEqual(
-            WeeklyUsageResetTrackingStatus.BaselineEstablished,
+            WeeklyUsageResetTrackingStatus.StateUnavailable,
             result.Status);
         Assert.IsNull(result.Detection);
     }

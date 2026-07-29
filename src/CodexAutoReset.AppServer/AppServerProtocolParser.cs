@@ -98,6 +98,7 @@ public static class AppServerProtocolParser
             ValidateObjectShape(errorElement, ErrorProperties, "code", "message");
 
             if (!errorElement.TryGetProperty("code", out var codeElement)
+                || codeElement.ValueKind != JsonValueKind.Number
                 || !codeElement.TryGetInt64(out var parsedLongCode)
                 || !errorElement.TryGetProperty("message", out var messageElement)
                 || messageElement.ValueKind != JsonValueKind.String)
@@ -134,7 +135,12 @@ public static class AppServerProtocolParser
         }
 
         EnsureNoDuplicateProperties(result);
-        ValidateObjectShape(result, InitializeProperties, InitializeProperties);
+        var schemaValidation = new ReadSchemaValidation();
+        ValidateReadObjectShape(
+            result,
+            schemaValidation,
+            InitializeProperties,
+            InitializeProperties);
         RequireString(result, "codexHome");
         RequireString(result, "platformFamily");
         RequireString(result, "platformOs");
@@ -167,7 +173,8 @@ public static class AppServerProtocolParser
             var middleLength = userAgent.Length
                 - auditedServerPrefix.Length
                 - expectedClientSuffix.Length;
-            return middleLength > 0
+            return schemaValidation.IsCompatible
+                && middleLength > 0
                 && !string.IsNullOrWhiteSpace(
                     userAgent.Substring(
                         auditedServerPrefix.Length,
@@ -192,8 +199,11 @@ public static class AppServerProtocolParser
         bool consumeSchemaCompatible = true)
     {
         EnsureNoDuplicateProperties(result);
-        ValidateObjectShape(
+        var schemaValidation = new ReadSchemaValidation(
+            consumeSchemaCompatible);
+        ValidateReadObjectShape(
             result,
+            schemaValidation,
             RateLimitsResponseProperties,
             "rateLimits");
         if (!result.TryGetProperty("rateLimits", out var legacyElement)
@@ -202,16 +212,16 @@ public static class AppServerProtocolParser
             throw InvalidResponse();
         }
 
-        var legacy = ParseSnapshot(legacyElement);
-        var byLimitId = ParseBuckets(result);
-        var resetCredits = ParseResetCredits(result);
+        var legacy = ParseSnapshot(legacyElement, schemaValidation);
+        var byLimitId = ParseBuckets(result, schemaValidation);
+        var resetCredits = ParseResetCredits(result, schemaValidation);
 
         return new AccountRateLimits(
             legacy,
             byLimitId,
             resetCredits,
             observedAt,
-            consumeSchemaCompatible);
+            schemaValidation.IsCompatible);
     }
 
     public static ConsumeResetCreditResult ParseConsumeResetCredit(
@@ -241,7 +251,8 @@ public static class AppServerProtocolParser
     }
 
     private static IReadOnlyDictionary<string, RateLimitSnapshot>? ParseBuckets(
-        JsonElement result)
+        JsonElement result,
+        ReadSchemaValidation schemaValidation)
     {
         if (!result.TryGetProperty("rateLimitsByLimitId", out var bucketsElement)
             || bucketsElement.ValueKind == JsonValueKind.Null)
@@ -265,7 +276,9 @@ public static class AppServerProtocolParser
                 throw InvalidResponse();
             }
 
-            if (!buckets.TryAdd(property.Name, ParseSnapshot(property.Value)))
+            if (!buckets.TryAdd(
+                    property.Name,
+                    ParseSnapshot(property.Value, schemaValidation)))
             {
                 // Keys that differ only by casing make the Codex bucket ambiguous.
                 throw InvalidResponse();
@@ -275,7 +288,9 @@ public static class AppServerProtocolParser
         return buckets;
     }
 
-    private static ResetCreditSummary? ParseResetCredits(JsonElement result)
+    private static ResetCreditSummary? ParseResetCredits(
+        JsonElement result,
+        ReadSchemaValidation schemaValidation)
     {
         if (!result.TryGetProperty("rateLimitResetCredits", out var summaryElement)
             || summaryElement.ValueKind == JsonValueKind.Null)
@@ -283,11 +298,13 @@ public static class AppServerProtocolParser
             return null;
         }
 
-        ValidateObjectShape(
+        ValidateReadObjectShape(
             summaryElement,
+            schemaValidation,
             CreditSummaryProperties,
             "availableCount");
         if (!summaryElement.TryGetProperty("availableCount", out var countElement)
+            || countElement.ValueKind != JsonValueKind.Number
             || !countElement.TryGetInt64(out var availableCount))
         {
             throw InvalidResponse();
@@ -314,7 +331,7 @@ public static class AppServerProtocolParser
                 throw InvalidResponse();
             }
 
-            var credit = ParseCredit(creditElement);
+            var credit = ParseCredit(creditElement, schemaValidation);
             if (!creditIds.Add(credit.Id))
             {
                 throw InvalidResponse();
@@ -331,10 +348,13 @@ public static class AppServerProtocolParser
         return new ResetCreditSummary(availableCount, credits);
     }
 
-    private static ResetCredit ParseCredit(JsonElement element)
+    private static ResetCredit ParseCredit(
+        JsonElement element,
+        ReadSchemaValidation schemaValidation)
     {
-        ValidateObjectShape(
+        ValidateReadObjectShape(
             element,
+            schemaValidation,
             CreditProperties,
             "grantedAt",
             "id",
@@ -344,13 +364,18 @@ public static class AppServerProtocolParser
         var resetType = RequireString(element, "resetType");
         var status = RequireString(element, "status");
 
-        if (resetType is not ("codexRateLimits" or "unknown")
-            || status is not ("available" or "redeeming" or "redeemed" or "unknown"))
+        if (resetType is not ("codexRateLimits" or "unknown"))
         {
-            throw InvalidResponse();
+            schemaValidation.MarkUnrecognized();
+        }
+
+        if (status is not ("available" or "redeeming" or "redeemed" or "unknown"))
+        {
+            schemaValidation.MarkUnrecognized();
         }
 
         if (!element.TryGetProperty("grantedAt", out var grantedAtElement)
+            || grantedAtElement.ValueKind != JsonValueKind.Number
             || !grantedAtElement.TryGetInt64(out var grantedAt))
         {
             throw InvalidResponse();
@@ -366,27 +391,38 @@ public static class AppServerProtocolParser
             OptionalString(element, "description"));
     }
 
-    private static RateLimitSnapshot ParseSnapshot(JsonElement element)
+    private static RateLimitSnapshot ParseSnapshot(
+        JsonElement element,
+        ReadSchemaValidation schemaValidation)
     {
-        ValidateObjectShape(element, SnapshotProperties);
-        ValidateCreditsSnapshot(element);
-        ValidateSpendControlLimit(element);
-        ValidateOptionalEnum(element, "planType", PlanTypes);
+        ValidateReadObjectShape(
+            element,
+            schemaValidation,
+            SnapshotProperties);
+        ValidateCreditsSnapshot(element, schemaValidation);
+        ValidateSpendControlLimit(element, schemaValidation);
+        ValidateOptionalEnum(
+            element,
+            "planType",
+            PlanTypes,
+            schemaValidation);
         ValidateOptionalEnum(
             element,
             "rateLimitReachedType",
-            RateLimitReachedTypes);
+            RateLimitReachedTypes,
+            schemaValidation);
 
         return new RateLimitSnapshot(
             OptionalString(element, "limitId"),
             OptionalString(element, "limitName"),
-            OptionalWindow(element, "primary"),
-            OptionalWindow(element, "secondary"));
+            OptionalWindow(element, "primary", schemaValidation),
+            OptionalWindow(element, "secondary", schemaValidation));
     }
 
     private static RateLimitWindow? OptionalWindow(
         JsonElement element,
-        string propertyName)
+        string propertyName,
+        ReadSchemaValidation schemaValidation)
     {
         if (!element.TryGetProperty(propertyName, out var windowElement)
             || windowElement.ValueKind == JsonValueKind.Null)
@@ -394,12 +430,23 @@ public static class AppServerProtocolParser
             return null;
         }
 
-        ValidateObjectShape(windowElement, WindowProperties, "usedPercent");
+        ValidateReadObjectShape(
+            windowElement,
+            schemaValidation,
+            WindowProperties,
+            "usedPercent");
         if (!windowElement.TryGetProperty("usedPercent", out var usedElement)
             || usedElement.ValueKind != JsonValueKind.Number
-            || !usedElement.TryGetInt32(out var usedPercent))
+            || !usedElement.TryGetDouble(out var usedPercent)
+            || !double.IsFinite(usedPercent)
+            || usedPercent is < 0 or > 100)
         {
             throw InvalidResponse();
+        }
+
+        if (!usedElement.TryGetInt32(out _))
+        {
+            schemaValidation.MarkUnrecognized();
         }
 
         return new RateLimitWindow(
@@ -408,7 +455,9 @@ public static class AppServerProtocolParser
             OptionalInt64(windowElement, "resetsAt"));
     }
 
-    private static void ValidateCreditsSnapshot(JsonElement snapshot)
+    private static void ValidateCreditsSnapshot(
+        JsonElement snapshot,
+        ReadSchemaValidation schemaValidation)
     {
         if (!snapshot.TryGetProperty("credits", out var credits)
             || credits.ValueKind == JsonValueKind.Null)
@@ -416,8 +465,9 @@ public static class AppServerProtocolParser
             return;
         }
 
-        ValidateObjectShape(
+        ValidateReadObjectShape(
             credits,
+            schemaValidation,
             CreditsSnapshotProperties,
             "hasCredits",
             "unlimited");
@@ -426,7 +476,9 @@ public static class AppServerProtocolParser
         OptionalString(credits, "balance");
     }
 
-    private static void ValidateSpendControlLimit(JsonElement snapshot)
+    private static void ValidateSpendControlLimit(
+        JsonElement snapshot,
+        ReadSchemaValidation schemaValidation)
     {
         if (!snapshot.TryGetProperty("individualLimit", out var individualLimit)
             || individualLimit.ValueKind == JsonValueKind.Null)
@@ -434,8 +486,9 @@ public static class AppServerProtocolParser
             return;
         }
 
-        ValidateObjectShape(
+        ValidateReadObjectShape(
             individualLimit,
+            schemaValidation,
             SpendControlProperties,
             SpendControlProperties);
         RequireString(individualLimit, "limit");
@@ -443,18 +496,28 @@ public static class AppServerProtocolParser
         if (!individualLimit.TryGetProperty(
                 "remainingPercent",
                 out var remainingPercent)
-            || !remainingPercent.TryGetInt32(out _)
+            || remainingPercent.ValueKind != JsonValueKind.Number
+            || !remainingPercent.TryGetDouble(out var parsedRemainingPercent)
+            || !double.IsFinite(parsedRemainingPercent)
+            || parsedRemainingPercent is < 0 or > 100
             || !individualLimit.TryGetProperty("resetsAt", out var resetsAt)
+            || resetsAt.ValueKind != JsonValueKind.Number
             || !resetsAt.TryGetInt64(out _))
         {
             throw InvalidResponse();
+        }
+
+        if (!remainingPercent.TryGetInt32(out _))
+        {
+            schemaValidation.MarkUnrecognized();
         }
     }
 
     private static void ValidateOptionalEnum(
         JsonElement element,
         string propertyName,
-        IReadOnlySet<string> allowedValues)
+        IReadOnlySet<string> allowedValues,
+        ReadSchemaValidation schemaValidation)
     {
         if (!element.TryGetProperty(propertyName, out var value)
             || value.ValueKind == JsonValueKind.Null)
@@ -463,10 +526,14 @@ public static class AppServerProtocolParser
         }
 
         if (value.ValueKind != JsonValueKind.String
-            || value.GetString() is not { } parsed
-            || !allowedValues.Contains(parsed))
+            || value.GetString() is not { } parsed)
         {
             throw InvalidResponse();
+        }
+
+        if (!allowedValues.Contains(parsed))
+        {
+            schemaValidation.MarkUnrecognized();
         }
     }
 
@@ -515,7 +582,8 @@ public static class AppServerProtocolParser
             return null;
         }
 
-        if (!value.TryGetInt64(out var parsed))
+        if (value.ValueKind != JsonValueKind.Number
+            || !value.TryGetInt64(out var parsed))
         {
             throw InvalidResponse();
         }
@@ -531,7 +599,9 @@ public static class AppServerProtocolParser
             return false;
         }
 
-        return (idElement.TryGetInt64(out var numericId) && numericId == expectedId)
+        return (idElement.ValueKind == JsonValueKind.Number
+                && idElement.TryGetInt64(out var numericId)
+                && numericId == expectedId)
             || (idElement.ValueKind == JsonValueKind.String
                 && long.TryParse(
                     idElement.GetString(),
@@ -558,6 +628,39 @@ public static class AppServerProtocolParser
                 || !allowedProperties.Contains(property.Name, StringComparer.Ordinal))
             {
                 throw InvalidResponse();
+            }
+        }
+
+        if (requiredProperties.Any(required => !seen.Contains(required)))
+        {
+            throw InvalidResponse();
+        }
+    }
+
+    private static void ValidateReadObjectShape(
+        JsonElement element,
+        ReadSchemaValidation schemaValidation,
+        IReadOnlyCollection<string> auditedProperties,
+        params string[] requiredProperties)
+    {
+        if (element.ValueKind != JsonValueKind.Object)
+        {
+            throw InvalidResponse();
+        }
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var property in element.EnumerateObject())
+        {
+            if (!seen.Add(property.Name))
+            {
+                throw InvalidResponse();
+            }
+
+            if (!auditedProperties.Contains(
+                    property.Name,
+                    StringComparer.Ordinal))
+            {
+                schemaValidation.MarkUnrecognized();
             }
         }
 
@@ -596,4 +699,19 @@ public static class AppServerProtocolParser
 
     private static AppServerException InvalidResponse() =>
         new(AppServerFailureCategory.InvalidResponse);
+
+    private sealed class ReadSchemaValidation
+    {
+        public ReadSchemaValidation(bool isCompatible = true)
+        {
+            IsCompatible = isCompatible;
+        }
+
+        public bool IsCompatible { get; private set; }
+
+        public void MarkUnrecognized()
+        {
+            IsCompatible = false;
+        }
+    }
 }

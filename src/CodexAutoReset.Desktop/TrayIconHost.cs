@@ -221,6 +221,10 @@ public sealed class TrayIconHost : IDisposable
         "automation_disabled" => "사용량 확인 완료",
         "no_action" => "정상 · 초기화 조건 미충족",
         "duplicate_suppressed" => "정상 · 이번 주간 구간은 이미 처리됨",
+        "live_recovery_pending" => "안전 대기 · 초기화 후 잔여량 회복 확인 중",
+        "usage_reset_settling" => "안전 대기 · 사용량 초기화 반영 확인 중",
+        "usage_reset_state_unavailable" => "안전 차단 · 초기화 확인 기록 오류",
+        "scheduled_reset_imminent" => "안전 대기 · 정기 초기화 임박",
         _ => "상태 확인됨",
     };
 

@@ -523,7 +523,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                 NumberStyles.None,
                 CultureInfo.InvariantCulture,
                 out var threshold)
-            && threshold is >= 1 and <= 100
+            && threshold >= GuardSettings.MinimumThreshold
+            && threshold <= GuardSettings.MaximumThreshold
             && IsPotentialImmediateResetThreshold(
                 threshold,
                 AutomationEnabled);
@@ -545,9 +546,11 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                 NumberStyles.None,
                 CultureInfo.InvariantCulture,
                 out var threshold)
-            || threshold is < 1 or > 100)
+            || threshold < GuardSettings.MinimumThreshold
+            || threshold > GuardSettings.MaximumThreshold)
         {
-            SaveStatus = "잔여량 임계값은 1~100%의 정수로 입력하세요.";
+            SaveStatus =
+                $"잔여량 임계값은 {GuardSettings.MinimumThreshold}~{GuardSettings.MaximumThreshold}%의 정수로 입력하세요.";
             return false;
         }
 
@@ -973,7 +976,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                     NumberStyles.None,
                     CultureInfo.InvariantCulture,
                     out var threshold)
-                && threshold is >= 1 and <= 100
+                && threshold >= GuardSettings.MinimumThreshold
+                && threshold <= GuardSettings.MaximumThreshold
                 && threshold != persistedSettings.RemainingThresholdPercent)
             {
                 persistedSettings =
@@ -1178,6 +1182,23 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                 : "초기화 결과 확인 대기 · 같은 처리 요청으로 다음 조회 때 자동 재시도합니다.";
         }
 
+        var safetyStatus = snapshot.StatusCode switch
+        {
+            "live_recovery_pending" =>
+                "초기화권 사용 후 주간 잔여량 회복을 확인하고 있습니다. 확인 전에는 추가 초기화권을 사용하지 않습니다.",
+            "usage_reset_settling" =>
+                "사용량 초기화를 감지했습니다. 최신 잔여량이 안정적으로 반영될 때까지 초기화권 자동 사용을 잠시 보류합니다.",
+            "usage_reset_state_unavailable" =>
+                "사용량 초기화 확인 기록을 읽을 수 없어 초기화권 자동 사용을 안전하게 중단했습니다. 문제가 계속되면 앱을 다시 시작하고 로컬 설정 데이터의 접근 권한을 확인하세요.",
+            "scheduled_reset_imminent" =>
+                "정기 초기화 시각이 임박해 초기화권을 사용하지 않고 다음 사용량 갱신을 기다립니다.",
+            _ => null,
+        };
+        if (safetyStatus is not null)
+        {
+            return safetyStatus;
+        }
+
         if (snapshot.IsFailure)
         {
             return snapshot.StatusCode switch
@@ -1227,7 +1248,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     private static string ToFriendlySettingsFailure(string code) => code switch
     {
-        "threshold_out_of_range" => "잔여량 임계값은 1~100%로 설정하세요.",
+        "threshold_out_of_range" =>
+            $"잔여량 임계값은 {GuardSettings.MinimumThreshold}~{GuardSettings.MaximumThreshold}%로 설정하세요.",
         "poll_interval_out_of_range" => "조회 주기는 1~60분으로 설정하세요.",
         "codex_executable_path_invalid" => "선택한 codex.exe를 찾을 수 없습니다. 다시 선택하세요.",
         "settings_access_denied" => "설정 파일에 접근할 수 없습니다. 앱 권한과 보안 프로그램을 확인하세요.",

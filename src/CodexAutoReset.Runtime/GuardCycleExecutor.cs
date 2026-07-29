@@ -7,6 +7,8 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
 {
     private static readonly TimeSpan CompatibilityVerificationDelay =
         TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan UsageResetSettlementDelay =
+        TimeSpan.FromMinutes(5);
     private static readonly string CompatibilityRevision =
         string.Concat(
             typeof(GuardCycleExecutor).Assembly.GetName().Version?.ToString(3)
@@ -106,12 +108,13 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
                 settings,
                 snapshot,
                 now);
-            var usageResetDetection = await TryObserveWeeklyUsageAsync(
+            var usageResetTracking = await TryObserveWeeklyUsageAsync(
                 snapshot,
                 initialEvaluation.Weekly,
                 WeeklyUsageResetAttribution.None,
                 settings.NotifyOnUsageReset,
                 cancellationToken).ConfigureAwait(false);
+            var usageResetDetection = usageResetTracking?.Detection;
 
             GuardCycleResult result;
             var semanticCompatibilityCode =
@@ -170,6 +173,24 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
                     .ConfigureAwait(false);
                 var hasUnresolvedAttempt = attempts.Any(
                     attempt => attempt.Phase != LiveAttemptPhase.Terminal);
+                var usageResetSettlementState =
+                    UsageResetSettlementState.Inactive;
+                if (!hasUnresolvedAttempt
+                    && initialEvaluation.Decision.Kind
+                        == DecisionKind.WouldConsume)
+                {
+                    usageResetSettlementState =
+                        usageResetTracking?.Status
+                            == WeeklyUsageResetTrackingStatus.StateUnavailable
+                            ? UsageResetSettlementState.StateUnavailable
+                            : await weeklyUsageResetTracker
+                                .GetSettlementStateAsync(
+                                    now,
+                                    UsageResetSettlementDelay,
+                                    cancellationToken)
+                                .ConfigureAwait(false);
+                }
+
                 liveSafetyLatch.TryClearProtocolMismatch(
                     compatibilityValidationSucceeded: true,
                     hasUnresolvedAttempt);
@@ -190,6 +211,24 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
                         initialEvaluation,
                         CycleActionKind.None,
                         "automation_disabled");
+                }
+                else if (usageResetSettlementState
+                    == UsageResetSettlementState.StateUnavailable)
+                {
+                    result = new GuardCycleResult(
+                        snapshot,
+                        initialEvaluation,
+                        CycleActionKind.Blocked,
+                        "usage_reset_state_unavailable");
+                }
+                else if (usageResetSettlementState
+                    == UsageResetSettlementState.Active)
+                {
+                    result = new GuardCycleResult(
+                        snapshot,
+                        initialEvaluation,
+                        CycleActionKind.None,
+                        "usage_reset_settling");
                 }
                 else
                 {
@@ -241,7 +280,7 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
                 !ReferenceEquals(snapshot, result.AccountRateLimits);
             if (hasRefreshedObservation)
             {
-                var refreshedDetection = await TryObserveWeeklyUsageAsync(
+                var refreshedTracking = await TryObserveWeeklyUsageAsync(
                     result.AccountRateLimits,
                     result.Evaluation.Weekly,
                     result.ActionKind == CycleActionKind.ResetSucceeded
@@ -253,7 +292,7 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
                         : cancellationToken).ConfigureAwait(false);
                 usageResetDetection = PreferUsageResetDetection(
                     usageResetDetection,
-                    refreshedDetection);
+                    refreshedTracking?.Detection);
             }
             else if (result.ActionKind == CycleActionKind.ResetSucceeded)
             {
@@ -292,7 +331,8 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
-    private async Task<WeeklyUsageResetDetection?> TryObserveWeeklyUsageAsync(
+    private async Task<WeeklyUsageResetTrackingResult?>
+        TryObserveWeeklyUsageAsync(
         AccountRateLimits snapshot,
         WindowReading? weekly,
         WeeklyUsageResetAttribution attribution,
@@ -314,7 +354,7 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
                 attribution,
                 notificationsEnabled,
                 cancellationToken).ConfigureAwait(false);
-            return tracking.Detection;
+            return tracking;
         }
         catch (OperationCanceledException)
             when (cancellationToken.IsCancellationRequested)
@@ -323,7 +363,9 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
         }
         catch (Exception exception) when (!IsFatal(exception))
         {
-            return null;
+            return new WeeklyUsageResetTrackingResult(
+                WeeklyUsageResetTrackingStatus.StateUnavailable,
+                Detection: null);
         }
     }
 
@@ -380,12 +422,22 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
 
         var (actionKind, actionCode) = liveResult.Kind switch
         {
+            LiveResetCycleKind.NoAction
+                when liveResult.Evaluation.Decision.Reason
+                    == DecisionReason.ScheduledResetImminent =>
+                (CycleActionKind.None, "scheduled_reset_imminent"),
             LiveResetCycleKind.NoAction => (CycleActionKind.None, "no_action"),
             LiveResetCycleKind.Blocked => (
                 CycleActionKind.Blocked,
                 MapBlockedCode(
                     liveResult.Attempt?.BlockReason
                         ?? liveResult.ProcessBlockReason)),
+            LiveResetCycleKind.DuplicateSuppressed
+                when liveResult.RequiresRefresh
+                    && liveResult.Outcome is (
+                        ConsumeResetCreditOutcome.Reset
+                        or ConsumeResetCreditOutcome.AlreadyRedeemed) =>
+                (CycleActionKind.None, "live_recovery_pending"),
             LiveResetCycleKind.DuplicateSuppressed =>
                 (CycleActionKind.None, "duplicate_suppressed"),
             LiveResetCycleKind.Completed => MapCompletedOutcome(
@@ -691,11 +743,15 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
         "protocol_read_unsupported" => "protocol_read_unsupported",
         "protocol_verification_pending" => "protocol_verification_pending",
         "mutation_schema_unverified" => "mutation_schema_unverified",
+        "usage_reset_state_unavailable" => "usage_reset_state_unavailable",
+        "usage_reset_settling" => "usage_reset_settling",
+        "scheduled_reset_imminent" => "scheduled_reset_imminent",
         "live_context_changed" => "live_context_changed",
         "live_secret_unavailable" => "live_secret_unavailable",
         "live_dispatch_limit" => "live_dispatch_limit",
         "live_needs_review" => "live_needs_review",
         "live_retry_pending" => "live_retry_pending",
+        "live_recovery_pending" => "live_recovery_pending",
         "live_reset" => "live_reset",
         "live_reset_refresh_pending" => "live_reset_refresh_pending",
         "live_already_redeemed" => "live_already_redeemed",

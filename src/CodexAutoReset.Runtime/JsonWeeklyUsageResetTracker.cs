@@ -29,6 +29,13 @@ public enum AutomaticCreditAttributionTrackingStatus
     StateUnavailable,
 }
 
+public enum UsageResetSettlementState
+{
+    Inactive,
+    Active,
+    StateUnavailable,
+}
+
 public sealed class JsonWeeklyUsageResetTracker
 {
     private const string RequiredFileName = "usage-reset-state.json";
@@ -40,6 +47,8 @@ public sealed class JsonWeeklyUsageResetTracker
     private const double SaturationJitterFloorPercent = 99d;
     private static readonly TimeSpan RollingResetTimeSlack =
         TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan AutomaticCreditAttributionGrace =
+        TimeSpan.FromMinutes(10);
 
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
@@ -66,6 +75,57 @@ public sealed class JsonWeeklyUsageResetTracker
 
     public string Path => path;
 
+    public async Task<UsageResetSettlementState> GetSettlementStateAsync(
+        DateTimeOffset now,
+        TimeSpan settlementWindow,
+        CancellationToken cancellationToken)
+    {
+        if (now < DateTimeOffset.UnixEpoch)
+        {
+            throw new ArgumentOutOfRangeException(nameof(now));
+        }
+
+        if (settlementWindow <= TimeSpan.Zero
+            || settlementWindow > TimeSpan.FromHours(1))
+        {
+            throw new ArgumentOutOfRangeException(nameof(settlementWindow));
+        }
+
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            UsageResetStateDocument state;
+            try
+            {
+                state = await LoadAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+                when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception) when (!IsFatal(exception))
+            {
+                return UsageResetSettlementState.StateUnavailable;
+            }
+
+            if (state.LastDetection is not { } storedDetection)
+            {
+                return UsageResetSettlementState.Inactive;
+            }
+
+            var detectedAt = storedDetection.DetectedAt;
+            return now < detectedAt
+                || now - detectedAt < settlementWindow
+                    ? UsageResetSettlementState.Active
+                    : UsageResetSettlementState.Inactive;
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
     public async Task<WeeklyUsageResetTrackingResult> ObserveAsync(
         WeeklyUsageObservation observation,
         WeeklyUsageResetAttribution attribution,
@@ -87,6 +147,11 @@ public sealed class JsonWeeklyUsageResetTracker
             try
             {
                 state = await LoadAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (
+                exception is UnsupportedUsageResetSchemaException)
+            {
+                return Unavailable();
             }
             catch (Exception exception) when (
                 exception is JsonException or InvalidDataException)
@@ -128,7 +193,8 @@ public sealed class JsonWeeklyUsageResetTracker
             if (pendingAttribution is not null
                 && observation.ObservedAt
                     >= DateTimeOffset.FromUnixTimeSeconds(
-                        pendingAttribution.BaselineResetsAt))
+                        pendingAttribution.BaselineResetsAt)
+                        .Add(AutomaticCreditAttributionGrace))
             {
                 pendingAttribution = null;
                 pendingChanged = true;
@@ -600,7 +666,7 @@ public sealed class JsonWeeklyUsageResetTracker
             CurrentSchemaVersion =>
                 document.RootElement.Deserialize<UsageResetStateDocument>(
                     SerializerOptions),
-            _ => throw new InvalidDataException(),
+            _ => throw new UnsupportedUsageResetSchemaException(),
         };
         ValidateState(state);
         return state!;
@@ -693,7 +759,7 @@ public sealed class JsonWeeklyUsageResetTracker
 
             TryDelete(quarantinePath);
             return new WeeklyUsageResetTrackingResult(
-                WeeklyUsageResetTrackingStatus.BaselineEstablished,
+                WeeklyUsageResetTrackingStatus.StateUnavailable,
                 Detection: null);
         }
         catch (OperationCanceledException)
@@ -866,7 +932,8 @@ public sealed class JsonWeeklyUsageResetTracker
         && pending.BaselineResetsAt == previous.ResetsAt
         && current.ObservedAt >= pending.SucceededAt
         && current.ObservedAt
-            < DateTimeOffset.FromUnixTimeSeconds(pending.BaselineResetsAt);
+            < DateTimeOffset.FromUnixTimeSeconds(pending.BaselineResetsAt)
+                .Add(AutomaticCreditAttributionGrace);
 
     private static bool ShouldMergeWithPersistedRecoveryEpisode(
         StoredWeeklyUsageResetDetection? episode,
@@ -990,6 +1057,11 @@ public sealed class JsonWeeklyUsageResetTracker
             get;
             init;
         }
+    }
+
+    private sealed class UnsupportedUsageResetSchemaException
+        : Exception
+    {
     }
 
     private sealed record StoredWeeklyUsageObservation

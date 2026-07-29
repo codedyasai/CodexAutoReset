@@ -221,18 +221,12 @@ public sealed class UsageResetNotificationCoordinator : IAsyncDisposable
     {
         var pending = await tracker.LoadPendingNotificationsAsync(
             cancellationToken).ConfigureAwait(false);
-        if (displayedEventId is not null
-            && pending.Any(notification => string.Equals(
-                notification.EventId,
-                displayedEventId,
-                StringComparison.Ordinal)))
+        if (displayedEventId is not null && presenter.IsVisible)
         {
-            if (presenter.IsVisible)
-            {
-                return null;
-            }
-
-            displayedEventId = null;
+            // A transient state read can surface as an empty pending list.
+            // Keep the visible notification and its confirmation callback
+            // intact so the user can retry after local storage recovers.
+            return null;
         }
 
         displayedEventId = null;

@@ -496,7 +496,7 @@
                                        Content="잔여량 임계값" />
                                 <TextBlock Margin="0,3,0,8"
                                            Style="{StaticResource CaptionTextStyle}"
-                                           Text="주간 잔여량이 이 값 이하일 때 초기화 조건을 확인합니다. (1~100%)" />
+                                           Text="주간 잔여량이 이 값 이하일 때 초기화 조건을 확인합니다. (1~99%)" />
                                 <DockPanel LastChildFill="False">
                                     <TextBox x:Name="ThresholdInput"
                                              Width="116"

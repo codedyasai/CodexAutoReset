@@ -107,6 +107,94 @@ public sealed class GuardCycleExecutorTests
     }
 
     [TestMethod]
+    public async Task ExecuteAsync_DetectedResetSettlesAcrossRestartBeforeConsume()
+    {
+        var previousResetAt = Now.AddDays(2);
+        var detectedAt = Now.AddMinutes(1);
+        var nextResetAt = detectedAt.AddDays(7);
+        var settings = GuardSettings.Default with
+        {
+            AutomationEnabled = true,
+        };
+
+        var baselineFactory = new FakeClientFactory(
+            CreateSnapshot(75, Now, previousResetAt));
+        var baselineExecutor = CreateExecutor(
+            baselineFactory,
+            new FixedTimeProvider(Now));
+        _ = await baselineExecutor.ExecuteAsync(
+            settings,
+            CancellationToken.None);
+
+        var detectionFactory = new FakeClientFactory(
+            CreateSnapshot(95, detectedAt, nextResetAt));
+        var detectionExecutor = CreateExecutor(
+            detectionFactory,
+            new FixedTimeProvider(detectedAt));
+        var detected = await detectionExecutor.ExecuteAsync(
+            settings,
+            CancellationToken.None);
+
+        Assert.AreEqual(0, detectionFactory.ConsumeCount);
+        Assert.AreEqual("usage_reset_settling", detected.ActionCode);
+        Assert.AreEqual(
+            WeeklyUsageResetKind.Early,
+            detected.UsageResetDetection?.Kind);
+
+        var stillSettlingFactory = new FakeClientFactory(
+            CreateSnapshot(95, detectedAt.AddMinutes(4), nextResetAt));
+        var restartedExecutor = CreateExecutor(
+            stillSettlingFactory,
+            new FixedTimeProvider(detectedAt.AddMinutes(4)));
+        var stillSettling = await restartedExecutor.ExecuteAsync(
+            settings,
+            CancellationToken.None);
+
+        Assert.AreEqual(0, stillSettlingFactory.ConsumeCount);
+        Assert.AreEqual("usage_reset_settling", stillSettling.ActionCode);
+
+        var settledFactory = new FakeClientFactory(
+            CreateSnapshot(95, detectedAt.AddMinutes(5), nextResetAt));
+        var settledExecutor = CreateExecutor(
+            settledFactory,
+            new FixedTimeProvider(detectedAt.AddMinutes(5)));
+        var settled = await settledExecutor.ExecuteAsync(
+            settings,
+            CancellationToken.None);
+
+        Assert.AreEqual(1, settledFactory.ConsumeCount);
+        Assert.AreEqual(
+            "live_reset_refresh_pending",
+            settled.ActionCode);
+    }
+
+    [TestMethod]
+    public async Task ExecuteAsync_UsageResetStateUnavailableBlocksNewConsume()
+    {
+        Directory.CreateDirectory(paths.RootDirectory);
+        await File.WriteAllTextAsync(
+            paths.UsageResetStateFile,
+            """{"schemaVersion":99}""");
+        var factory = new FakeClientFactory(
+            CreateSnapshot(weeklyUsedPercent: 95));
+        var executor = CreateExecutor(factory);
+        var settings = GuardSettings.Default with
+        {
+            AutomationEnabled = true,
+        };
+
+        var result = await executor.ExecuteAsync(
+            settings,
+            CancellationToken.None);
+
+        Assert.AreEqual(0, factory.ConsumeCount);
+        Assert.AreEqual(CycleActionKind.Blocked, result.ActionKind);
+        Assert.AreEqual(
+            "usage_reset_state_unavailable",
+            result.ActionCode);
+    }
+
+    [TestMethod]
     public async Task ExecuteAsync_LiveAboveThresholdDoesNotConsume()
     {
         var factory = new FakeClientFactory(CreateSnapshot(weeklyUsedPercent: 80));
@@ -138,8 +226,8 @@ public sealed class GuardCycleExecutorTests
 
         Assert.AreEqual(1, factory.ConsumeCount);
         Assert.AreEqual(CycleActionKind.ResetSucceeded, first.ActionKind);
-        Assert.AreEqual("live_reset", first.ActionCode);
-        Assert.AreEqual("duplicate_suppressed", second.ActionCode);
+        Assert.AreEqual("live_reset_refresh_pending", first.ActionCode);
+        Assert.AreEqual("live_recovery_pending", second.ActionCode);
 
         var stateText = await File.ReadAllTextAsync(paths.LiveStateFile);
         Assert.IsFalse(stateText.Contains("private-credit-id", StringComparison.Ordinal));
@@ -147,6 +235,83 @@ public sealed class GuardCycleExecutorTests
             Environment.NewLine,
             Directory.EnumerateFiles(paths.LogDirectory).Select(File.ReadAllText));
         Assert.IsFalse(logText.Contains("private-credit-id", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public async Task ExecuteAsync_RecoveryOscillationCannotConsumeSecondCredit()
+    {
+        var previousResetAt = Now.AddDays(6);
+        var recoveredResetAt = Now.AddDays(7);
+        var settings = GuardSettings.Default with
+        {
+            AutomationEnabled = true,
+        };
+        var initialFactory = new FakeClientFactory(
+            CreateSnapshot(95, Now.AddMinutes(-1), previousResetAt))
+        {
+            PostConsumeSnapshot = CreateSnapshot(
+                0,
+                Now,
+                recoveredResetAt),
+        };
+        var initialExecutor = CreateExecutor(
+            initialFactory,
+            new FixedTimeProvider(Now));
+
+        var completed = await initialExecutor.ExecuteAsync(
+            settings,
+            CancellationToken.None);
+
+        var lowFactory = new FakeClientFactory(
+            CreateSnapshot(
+                95,
+                Now.AddMinutes(1),
+                recoveredResetAt));
+        var lowExecutor = CreateExecutor(
+            lowFactory,
+            new FixedTimeProvider(Now.AddMinutes(1)));
+        var lowDuringSettlement = await lowExecutor.ExecuteAsync(
+            settings,
+            CancellationToken.None);
+
+        var recoveryFactory = new FakeClientFactory(
+            CreateSnapshot(
+                0,
+                Now.AddMinutes(2),
+                recoveredResetAt));
+        var recoveryExecutor = CreateExecutor(
+            recoveryFactory,
+            new FixedTimeProvider(Now.AddMinutes(2)));
+        var recovery = await recoveryExecutor.ExecuteAsync(
+            settings,
+            CancellationToken.None);
+
+        var oscillatingLowFactory = new FakeClientFactory(
+            CreateSnapshot(
+                95,
+                Now.AddMinutes(6),
+                recoveredResetAt));
+        var oscillatingLowExecutor = CreateExecutor(
+            oscillatingLowFactory,
+            new FixedTimeProvider(Now.AddMinutes(6)));
+        var oscillatingLow = await oscillatingLowExecutor.ExecuteAsync(
+            settings,
+            CancellationToken.None);
+
+        Assert.AreEqual(1, initialFactory.ConsumeCount);
+        Assert.AreEqual(
+            "live_reset_refresh_pending",
+            completed.ActionCode);
+        Assert.AreEqual(0, lowFactory.ConsumeCount);
+        Assert.AreEqual(
+            "usage_reset_settling",
+            lowDuringSettlement.ActionCode);
+        Assert.AreEqual(0, recoveryFactory.ConsumeCount);
+        Assert.AreEqual("no_action", recovery.ActionCode);
+        Assert.AreEqual(0, oscillatingLowFactory.ConsumeCount);
+        Assert.AreEqual(
+            "usage_reset_settling",
+            oscillatingLow.ActionCode);
     }
 
     [TestMethod]
@@ -262,6 +427,32 @@ public sealed class GuardCycleExecutorTests
 
         Assert.AreEqual(CycleActionKind.ResetNoEffect, result.ActionKind);
         Assert.AreEqual("live_no_credit_refresh_pending", result.ActionCode);
+    }
+
+    [TestMethod]
+    public async Task ExecuteAsync_ScheduledResetImminentUsesExplicitWaitStatus()
+    {
+        var factory = new FakeClientFactory(
+            CreateSnapshot(
+                95,
+                Now,
+                Now.AddMinutes(4)));
+        var executor = CreateExecutor(factory);
+        var settings = GuardSettings.Default with
+        {
+            AutomationEnabled = true,
+        };
+
+        var result = await executor.ExecuteAsync(
+            settings,
+            CancellationToken.None);
+
+        Assert.AreEqual(0, factory.ConsumeCount);
+        Assert.AreEqual(CycleActionKind.None, result.ActionKind);
+        Assert.AreEqual(
+            DecisionReason.ScheduledResetImminent,
+            result.Evaluation.Decision.Reason);
+        Assert.AreEqual("scheduled_reset_imminent", result.ActionCode);
     }
 
     [TestMethod]
@@ -429,6 +620,15 @@ public sealed class GuardCycleExecutorTests
         new TestSecretProtector(),
         AppServerLiveResetFailureClassifier.Instance,
         new FixedTimeProvider(Now));
+
+    private GuardCycleExecutor CreateExecutor(
+        FakeClientFactory factory,
+        TimeProvider timeProvider) => new(
+            paths,
+            factory,
+            new TestSecretProtector(),
+            AppServerLiveResetFailureClassifier.Instance,
+            timeProvider);
 
     private GuardCycleExecutor CreateExecutor(
         SequencedSnapshotClientFactory factory) => new(

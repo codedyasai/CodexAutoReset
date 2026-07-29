@@ -203,6 +203,59 @@ public sealed class CompatibilityGuardCycleExecutorTests
     }
 
     [TestMethod]
+    public async Task AdditiveReadSchemaStillDisplaysUsageButBlocksMutation()
+    {
+        var resetAt = InitialNow.AddDays(6).ToUnixTimeSeconds();
+        var grantedAt = InitialNow.AddMinutes(-1).ToUnixTimeSeconds();
+        var expiresAt = InitialNow.AddDays(1).ToUnixTimeSeconds();
+        using var document = System.Text.Json.JsonDocument.Parse(
+            $$"""
+            {
+              "rateLimits": {
+                "limitId": "codex",
+                "secondary": {
+                  "usedPercent": 95,
+                  "windowDurationMins": 10080,
+                  "resetsAt": {{resetAt}}
+                }
+              },
+              "rateLimitResetCredits": {
+                "availableCount": 1,
+                "credits": [
+                  {
+                    "id": "private-credit-id",
+                    "resetType": "codexRateLimits",
+                    "status": "available",
+                    "grantedAt": {{grantedAt}},
+                    "expiresAt": {{expiresAt}}
+                  }
+                ]
+              },
+              "futureReadField": true
+            }
+            """);
+        var snapshot = AppServerProtocolParser.ParseRateLimits(
+            document.RootElement,
+            InitialNow);
+        var factory = new CompatibilityClientFactory(snapshot);
+        var executor = CreateExecutor(factory);
+        var settings = GuardSettings.Default with
+        {
+            AutomationEnabled = true,
+        };
+
+        var result = await executor.ExecuteAsync(
+            settings,
+            CancellationToken.None);
+
+        Assert.IsFalse(snapshot.ConsumeSchemaCompatible);
+        Assert.AreEqual("mutation_schema_unverified", result.ActionCode);
+        Assert.AreEqual(CycleActionKind.Blocked, result.ActionKind);
+        Assert.AreEqual(5d, result.Evaluation.Weekly?.RemainingPercent);
+        Assert.AreEqual(0, factory.ConsumeCount);
+    }
+
+    [TestMethod]
     public async Task MutationResponseMismatchReturnsReadableUsageAndLatchesImmediately()
     {
         var factory = new CompatibilityClientFactory(

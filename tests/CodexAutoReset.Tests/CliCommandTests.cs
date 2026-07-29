@@ -361,7 +361,10 @@ public sealed class CliCommandTests
 
         Assert.AreEqual(LiveResetCycleKind.Completed, captured.Result.Kind);
         Assert.AreEqual(outcome, captured.Result.Outcome);
-        Assert.IsFalse(captured.Result.RequiresRefresh);
+        var recoveryExpected = outcome is
+            ConsumeResetCreditOutcome.Reset
+            or ConsumeResetCreditOutcome.AlreadyRedeemed;
+        Assert.AreEqual(recoveryExpected, captured.Result.RequiresRefresh);
         Assert.AreEqual(1, client.ConsumeRequests.Count);
         Assert.AreEqual(1, client.ReadCount);
         StringAssert.Contains(captured.StandardOutput, $"Reset outcome: {wireOutcome}");
@@ -374,7 +377,7 @@ public sealed class CliCommandTests
         var attempt = (await store.ReadAsync(CancellationToken.None)).Single();
         Assert.AreEqual(LiveAttemptPhase.Terminal, attempt.Phase);
         Assert.AreEqual(outcome, attempt.Outcome);
-        Assert.IsFalse(attempt.RefreshRequired);
+        Assert.AreEqual(recoveryExpected, attempt.RefreshRequired);
         Assert.IsTrue(Guid.TryParseExact(
             client.ConsumeRequests[0].IdempotencyKey,
             "D",

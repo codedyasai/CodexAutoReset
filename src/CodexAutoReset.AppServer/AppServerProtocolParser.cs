@@ -8,9 +8,11 @@ public static class AppServerProtocolParser
     private const int MaximumBuckets = 100;
     private const int MaximumCreditDetails = 1_000;
     private const int MaximumUserAgentLength = 1_024;
-    private const string ExpectedServerProduct = "Codex Desktop";
     private const string ExpectedClientName = "codex_auto_reset";
     public static string AuditedConsumeSchemaVersion { get; } = "0.144.5";
+
+    private static readonly string[] ExpectedServerProducts =
+        ["Codex Desktop", ExpectedClientName];
 
     private static readonly string[] ResponseResultProperties = ["id", "result"];
     private static readonly string[] ResponseErrorProperties = ["id", "error"];
@@ -144,21 +146,35 @@ public static class AppServerProtocolParser
             throw InvalidResponse();
         }
 
-        var auditedServerPrefix = $"{ExpectedServerProduct}/{AuditedConsumeSchemaVersion} ";
         var expectedClientSuffix =
             $" ({ExpectedClientName}; {expectedClientVersion})";
-        if (!userAgent.StartsWith(auditedServerPrefix, StringComparison.Ordinal)
-            || !userAgent.EndsWith(expectedClientSuffix, StringComparison.Ordinal))
+        if (!userAgent.EndsWith(expectedClientSuffix, StringComparison.Ordinal))
         {
             return false;
         }
 
-        var middleLength = userAgent.Length
-            - auditedServerPrefix.Length
-            - expectedClientSuffix.Length;
-        return middleLength > 0
-            && !string.IsNullOrWhiteSpace(
-                userAgent.Substring(auditedServerPrefix.Length, middleLength));
+        foreach (var product in ExpectedServerProducts)
+        {
+            var auditedServerPrefix =
+                $"{product}/{AuditedConsumeSchemaVersion} ";
+            if (!userAgent.StartsWith(
+                    auditedServerPrefix,
+                    StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var middleLength = userAgent.Length
+                - auditedServerPrefix.Length
+                - expectedClientSuffix.Length;
+            return middleLength > 0
+                && !string.IsNullOrWhiteSpace(
+                    userAgent.Substring(
+                        auditedServerPrefix.Length,
+                        middleLength));
+        }
+
+        return false;
     }
 
     private static bool IsThreePartVersion(string value)

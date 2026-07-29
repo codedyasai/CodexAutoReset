@@ -333,6 +333,18 @@ public sealed class ProtocolParserTests
     }
 
     [TestMethod]
+    public void InitializeResponseAcceptsNormalExternalClientOriginator()
+    {
+        using var response = CreateInitializeResponse(
+            "codex_auto_reset/0.144.5 (Windows 10.0.26200; x86_64) unknown (codex_auto_reset; 0.1.0)");
+
+        Assert.IsTrue(
+            AppServerProtocolParser.ValidateInitializeResult(
+                response.RootElement,
+                "0.1.0"));
+    }
+
+    [TestMethod]
     public void InitializeResponsePinsLiveConsumeToAuditedServerVersion()
     {
         using var future = JsonDocument.Parse(
@@ -354,8 +366,12 @@ public sealed class ProtocolParserTests
     [DataTestMethod]
     [DataRow("Codex Desktop/0.144.50 (Windows) unknown (codex_auto_reset; 0.1.0)")]
     [DataRow("xCodex Desktop/0.144.5 (Windows) unknown (codex_auto_reset; 0.1.0)")]
+    [DataRow("xcodex_auto_reset/0.144.5 (Windows) unknown (codex_auto_reset; 0.1.0)")]
+    [DataRow("codex_auto_reset/0.144.50 (Windows) unknown (codex_auto_reset; 0.1.0)")]
+    [DataRow("codex_auto_reset/0.145.0 (Windows) unknown (codex_auto_reset; 0.1.0)")]
     [DataRow("Codex Desktop/0.144.5 (codex_auto_reset; 0.1.0)")]
     [DataRow("Codex Desktop/0.144.5     (codex_auto_reset; 0.1.0)")]
+    [DataRow("codex_auto_reset/0.144.5     (codex_auto_reset; 0.1.0)")]
     [DataRow("Codex Desktop/0.144.5 (Windows) unknown (codex_auto_reset; 0.1.0)x")]
     public void InitializeResponseRequiresExactAuditedConsumeMarker(
         string userAgent)
@@ -374,6 +390,8 @@ public sealed class ProtocolParserTests
     [DataRow("Codex Desktop/0.144.5")]
     [DataRow("Codex Desktop/0.144.5 (Windows) unknown (other_client; 0.1.0)")]
     [DataRow("Codex Desktop/0.144.5 (Windows) unknown (codex_auto_reset; 0.2.0)")]
+    [DataRow("codex_auto_reset/0.144.5 (Windows) unknown (other_client; 0.1.0)")]
+    [DataRow("codex_auto_reset/0.144.5 (Windows) unknown (codex_auto_reset; 0.2.0)")]
     public void InitializeResponseKeepsUnexpectedUserAgentReadOnly(
         string userAgent)
     {

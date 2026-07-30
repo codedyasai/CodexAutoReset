@@ -24,7 +24,12 @@ public sealed record TriggerEvaluation(
     WindowReading? SelectedWindow,
     DecisionReason Reason,
     string? IntervalKey,
-    bool ThresholdReached);
+    bool ThresholdReached)
+{
+    public WindowReading? FiveHour { get; init; }
+
+    public TriggerLimit? SelectedLimit { get; init; }
+}
 
 public enum LiveAttemptPhase
 {

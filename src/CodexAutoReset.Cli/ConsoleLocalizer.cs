@@ -31,6 +31,8 @@ internal sealed class ConsoleLocalizer
 
     public string Weekly => korean ? "주간 한도" : "Weekly limit";
 
+    public string FiveHour => korean ? "5시간 한도" : "5-hour limit";
+
     public string Unknown => korean ? "확인 불가" : "Unavailable";
 
     public string Remaining => korean ? "잔여량" : "Remaining";
@@ -48,12 +50,12 @@ internal sealed class ConsoleLocalizer
         : "Automation disabled";
 
     public string ServerDeterminedScope => korean
-        ? "주간 한도는 발동 조건이며, 실제 초기화 범위는 서버가 결정합니다."
-        : "The weekly limit is the trigger; the server determines the actual reset scope.";
+        ? "설정한 한도는 발동 조건이며, 실제 초기화 범위는 서버가 결정합니다."
+        : "Configured limits are triggers; the server determines the actual reset scope.";
 
     public string LiveDuplicateSuppressed => korean
-        ? "같은 주간 구간에 완료 기록이 있어 중복 실행하지 않았습니다."
-        : "A terminal record already exists for this weekly window; no duplicate was sent.";
+        ? "같은 한도 구간에 완료 기록이 있어 중복 실행하지 않았습니다."
+        : "A terminal record already exists for this limit window; no duplicate was sent.";
 
     public string LiveNoAction => korean
         ? "현재 발동 조건을 충족하지 않아 초기화권을 사용하지 않았습니다."

@@ -44,6 +44,8 @@ public sealed record MonitorSnapshot(
     CodexCompatibilityState CompatibilityState = CodexCompatibilityState.Unknown,
     DateTimeOffset? LastSuccessfulObservationAt = null)
 {
+    public WindowReading? FiveHour { get; init; }
+
     public static MonitorSnapshot Waiting(GuardSettings settings) => new(
         DateTimeOffset.UtcNow,
         settings,
@@ -59,19 +61,22 @@ public sealed record MonitorSnapshot(
     public static MonitorSnapshot FromResult(
         GuardSettings settings,
         GuardCycleResult result) => new(
-        result.AccountRateLimits.ObservedAt,
-        settings,
-        result.Evaluation.Weekly,
-        result.Evaluation.AvailableCreditCount,
-        result.Evaluation.Decision.Kind,
-        result.Evaluation.Decision.Reason,
-        result.ActionKind,
-        result.ActionCode,
-        result.DuplicateSuppressed,
-        IsFailure: false,
-        result.UsageResetDetection,
-        CodexCompatibilityState.Compatible,
-        result.AccountRateLimits.ObservedAt);
+            result.AccountRateLimits.ObservedAt,
+            settings,
+            result.Evaluation.Weekly,
+            result.Evaluation.AvailableCreditCount,
+            result.Evaluation.Decision.Kind,
+            result.Evaluation.Decision.Reason,
+            result.ActionKind,
+            result.ActionCode,
+            result.DuplicateSuppressed,
+            IsFailure: false,
+            result.UsageResetDetection,
+            CodexCompatibilityState.Compatible,
+            result.AccountRateLimits.ObservedAt)
+        {
+            FiveHour = result.Evaluation.FiveHour,
+        };
 
     public static MonitorSnapshot Failure(
         GuardSettings settings,
@@ -263,19 +268,21 @@ public sealed class GuardMonitorService : IAsyncDisposable
             }
             catch (SettingsPartiallyAppliedException exception)
             {
-                ApplyPersistedSettings(exception.PersistedSettings);
-                RequestRefresh();
+                ApplyPersistedSettings(
+                    exception.PersistedSettings,
+                    preserveCurrentObservation: true);
                 throw;
             }
 
-            ApplyPersistedSettings(updatedSettings);
+            ApplyPersistedSettings(
+                updatedSettings,
+                preserveCurrentObservation: true);
         }
         finally
         {
             cycleGate.Release();
         }
 
-        RequestRefresh();
         return updatedSettings;
     }
 
@@ -283,11 +290,25 @@ public sealed class GuardMonitorService : IAsyncDisposable
         SettingsUpdateService settingsUpdateService,
         bool enabled,
         CancellationToken cancellationToken = default)
+        => SetAutomationEnabledAsync(
+            settingsUpdateService,
+            TriggerLimit.Weekly,
+            enabled,
+            cancellationToken);
+
+    public Task<GuardSettings> SetAutomationEnabledAsync(
+        SettingsUpdateService settingsUpdateService,
+        TriggerLimit triggerLimit,
+        bool enabled,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(settingsUpdateService);
         return ApplySettingsPatchAsync(
-            token => settingsUpdateService.SaveAutomationEnabledAsync(enabled, token),
-            requestRefresh: true,
+            token => settingsUpdateService.SaveAutomationEnabledAsync(
+                triggerLimit,
+                enabled,
+                token),
+            requestRefresh: enabled,
             cancellationToken);
     }
 
@@ -307,10 +328,22 @@ public sealed class GuardMonitorService : IAsyncDisposable
         SettingsUpdateService settingsUpdateService,
         int remainingThresholdPercent,
         CancellationToken cancellationToken = default)
+        => SetRemainingThresholdPercentAsync(
+            settingsUpdateService,
+            TriggerLimit.Weekly,
+            remainingThresholdPercent,
+            cancellationToken);
+
+    public Task<GuardSettings> SetRemainingThresholdPercentAsync(
+        SettingsUpdateService settingsUpdateService,
+        TriggerLimit triggerLimit,
+        int? remainingThresholdPercent,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(settingsUpdateService);
         return ApplySettingsPatchAsync(
             token => settingsUpdateService.SaveRemainingThresholdPercentAsync(
+                triggerLimit,
                 remainingThresholdPercent,
                 token),
             requestRefresh: true,
@@ -389,7 +422,7 @@ public sealed class GuardMonitorService : IAsyncDisposable
                 .ConfigureAwait(false);
             ApplyPersistedSettings(
                 updatedSettings,
-                preserveCurrentObservation: !requestRefresh);
+                preserveCurrentObservation: true);
         }
         finally
         {
@@ -443,7 +476,7 @@ public sealed class GuardMonitorService : IAsyncDisposable
         while (!cancellationToken.IsCancellationRequested)
         {
             var interval = TimeSpan.FromMinutes(
-                Volatile.Read(ref currentSettings).PollIntervalMinutes);
+                GuardSettings.FixedPollIntervalMinutes);
             try
             {
                 await refreshSignal.WaitAsync(interval, cancellationToken)
@@ -875,10 +908,16 @@ public sealed class GuardMonitorService : IAsyncDisposable
 
         var snapshot = CurrentSnapshot;
         if (snapshot.ActionKind != CycleActionKind.ResetPending
-            || !snapshot.Settings.AutomationEnabled
-            || !settings.AutomationEnabled
+            || !snapshot.Settings.AnyAutomationEnabled
+            || !settings.AnyAutomationEnabled
             || snapshot.Settings.RemainingThresholdPercent
-                != settings.RemainingThresholdPercent)
+                != settings.RemainingThresholdPercent
+            || snapshot.Settings.FiveHourRemainingThresholdPercent
+                != settings.FiveHourRemainingThresholdPercent
+            || snapshot.Settings.AutomationEnabled
+                != settings.AutomationEnabled
+            || snapshot.Settings.FiveHourAutomationEnabled
+                != settings.FiveHourAutomationEnabled)
         {
             return null;
         }

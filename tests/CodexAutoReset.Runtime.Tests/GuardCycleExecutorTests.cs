@@ -49,10 +49,10 @@ public sealed class GuardCycleExecutorTests
         var executor = CreateExecutor(factory);
 
         var first = await executor.ExecuteAsync(
-            GuardSettings.Default,
+            AutomationDisabledSettings,
             CancellationToken.None);
         var second = await executor.ExecuteAsync(
-            GuardSettings.Default,
+            AutomationDisabledSettings,
             CancellationToken.None);
 
         Assert.AreEqual(0, factory.ConsumeCount);
@@ -114,6 +114,7 @@ public sealed class GuardCycleExecutorTests
         var nextResetAt = detectedAt.AddDays(7);
         var settings = GuardSettings.Default with
         {
+            RemainingThresholdPercent = 7,
             AutomationEnabled = true,
         };
 
@@ -180,6 +181,7 @@ public sealed class GuardCycleExecutorTests
         var executor = CreateExecutor(factory);
         var settings = GuardSettings.Default with
         {
+            RemainingThresholdPercent = 7,
             AutomationEnabled = true,
         };
 
@@ -201,6 +203,7 @@ public sealed class GuardCycleExecutorTests
         var executor = CreateExecutor(factory);
         var settings = GuardSettings.Default with
         {
+            RemainingThresholdPercent = 7,
             AutomationEnabled = true,
         };
 
@@ -218,6 +221,7 @@ public sealed class GuardCycleExecutorTests
         var executor = CreateExecutor(factory);
         var settings = GuardSettings.Default with
         {
+            RemainingThresholdPercent = 7,
             AutomationEnabled = true,
         };
 
@@ -244,6 +248,7 @@ public sealed class GuardCycleExecutorTests
         var recoveredResetAt = Now.AddDays(7);
         var settings = GuardSettings.Default with
         {
+            RemainingThresholdPercent = 7,
             AutomationEnabled = true,
         };
         var initialFactory = new FakeClientFactory(
@@ -327,6 +332,7 @@ public sealed class GuardCycleExecutorTests
         var executor = CreateExecutor(factory);
         var settings = GuardSettings.Default with
         {
+            RemainingThresholdPercent = 7,
             AutomationEnabled = true,
         };
 
@@ -356,6 +362,7 @@ public sealed class GuardCycleExecutorTests
         var executor = CreateExecutor(factory);
         var settings = GuardSettings.Default with
         {
+            RemainingThresholdPercent = 7,
             AutomationEnabled = true,
         };
 
@@ -382,6 +389,7 @@ public sealed class GuardCycleExecutorTests
         };
         var settings = GuardSettings.Default with
         {
+            RemainingThresholdPercent = 7,
             AutomationEnabled = true,
         };
         var initialExecutor = CreateExecutor(initialFactory);
@@ -420,6 +428,7 @@ public sealed class GuardCycleExecutorTests
         var executor = CreateExecutor(factory);
         var settings = GuardSettings.Default with
         {
+            RemainingThresholdPercent = 7,
             AutomationEnabled = true,
         };
 
@@ -440,6 +449,7 @@ public sealed class GuardCycleExecutorTests
         var executor = CreateExecutor(factory);
         var settings = GuardSettings.Default with
         {
+            RemainingThresholdPercent = 7,
             AutomationEnabled = true,
         };
 
@@ -465,6 +475,7 @@ public sealed class GuardCycleExecutorTests
         var executor = CreateExecutor(factory);
         var settings = GuardSettings.Default with
         {
+            RemainingThresholdPercent = 7,
             AutomationEnabled = true,
         };
 
@@ -500,6 +511,7 @@ public sealed class GuardCycleExecutorTests
         var executor = CreateExecutor(factory);
         var settings = GuardSettings.Default with
         {
+            RemainingThresholdPercent = 7,
             AutomationEnabled = true,
         };
 
@@ -527,6 +539,7 @@ public sealed class GuardCycleExecutorTests
         var executor = CreateExecutor(factory);
         var settings = GuardSettings.Default with
         {
+            RemainingThresholdPercent = 7,
             AutomationEnabled = true,
         };
 
@@ -564,6 +577,7 @@ public sealed class GuardCycleExecutorTests
         var executor = CreateExecutor(factory);
         var settings = GuardSettings.Default with
         {
+            RemainingThresholdPercent = 7,
             AutomationEnabled = true,
         };
 
@@ -584,6 +598,7 @@ public sealed class GuardCycleExecutorTests
         var executor = CreateExecutor(factory);
         var settings = GuardSettings.Default with
         {
+            RemainingThresholdPercent = 7,
             AutomationEnabled = true,
         };
 
@@ -620,6 +635,15 @@ public sealed class GuardCycleExecutorTests
         new TestSecretProtector(),
         AppServerLiveResetFailureClassifier.Instance,
         new FixedTimeProvider(Now));
+
+    private static GuardSettings AutomationDisabledSettings =>
+        GuardSettings.Default with
+        {
+            RemainingThresholdPercent = 7,
+            AutomationEnabled = false,
+            FiveHourRemainingThresholdPercent = 7,
+            FiveHourAutomationEnabled = false,
+        };
 
     private GuardCycleExecutor CreateExecutor(
         FakeClientFactory factory,

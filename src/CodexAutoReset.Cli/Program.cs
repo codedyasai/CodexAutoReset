@@ -100,7 +100,7 @@ internal static class Program
 
         var localizer = new ConsoleLocalizer(initialSettings.UiLanguage);
         Console.WriteLine(localizer.Header(
-            initialSettings.AutomationEnabled && !options.Diagnostics));
+            initialSettings.AnyAutomationEnabled && !options.Diagnostics));
         if (options.Diagnostics)
         {
             Console.WriteLine(localizer.DiagnosticsReadOnly);
@@ -247,7 +247,7 @@ internal static class Program
                         liveFailureDisposition = LiveResetFailureDisposition.Unknown;
                     }
 
-                    if (settings.AutomationEnabled
+                    if (settings.AnyAutomationEnabled
                         && !options.Diagnostics
                         && liveFailureDisposition
                             != LiveResetFailureDisposition.Retryable)
@@ -266,7 +266,7 @@ internal static class Program
 
                     var category = ToCode(exception.Category);
                     Console.Error.WriteLine(localizer.Failure(category));
-                    if (settings.AutomationEnabled
+                    if (settings.AnyAutomationEnabled
                         && !options.Diagnostics)
                     {
                         Console.Error.WriteLine(localizer.LiveFailureState(
@@ -292,7 +292,7 @@ internal static class Program
                 catch (LiveStateException exception)
                 {
                     exitCode = 3;
-                    if (settings.AutomationEnabled
+                    if (settings.AnyAutomationEnabled
                         && !options.Diagnostics)
                     {
                         liveSafetyLatch.BlockUnknownFailure();
@@ -313,14 +313,14 @@ internal static class Program
                 catch (InvalidDataException)
                 {
                     exitCode = 3;
-                    if (settings.AutomationEnabled
+                    if (settings.AnyAutomationEnabled
                         && !options.Diagnostics)
                     {
                         liveSafetyLatch.BlockUnknownFailure();
                     }
 
                     Console.Error.WriteLine(localizer.Failure("state_invalid"));
-                    if (settings.AutomationEnabled
+                    if (settings.AnyAutomationEnabled
                         && !options.Diagnostics)
                     {
                         Console.Error.WriteLine(localizer.LiveFailureState(
@@ -339,14 +339,14 @@ internal static class Program
                 catch (IOException)
                 {
                     exitCode = 3;
-                    if (settings.AutomationEnabled
+                    if (settings.AnyAutomationEnabled
                         && !options.Diagnostics)
                     {
                         liveSafetyLatch.BlockUnknownFailure();
                     }
 
                     Console.Error.WriteLine(localizer.Failure("local_io_error"));
-                    if (settings.AutomationEnabled
+                    if (settings.AnyAutomationEnabled
                         && !options.Diagnostics)
                     {
                         Console.Error.WriteLine(localizer.LiveFailureState(
@@ -365,7 +365,7 @@ internal static class Program
                 catch (Exception exception) when (!IsFatal(exception))
                 {
                     exitCode = 3;
-                    if (settings.AutomationEnabled
+                    if (settings.AnyAutomationEnabled
                         && !options.Diagnostics)
                     {
                         liveSafetyLatch.BlockUnknownFailure();
@@ -373,7 +373,7 @@ internal static class Program
 
                     Console.Error.WriteLine(localizer.Failure(
                         "unexpected_local_failure"));
-                    if (settings.AutomationEnabled
+                    if (settings.AnyAutomationEnabled
                         && !options.Diagnostics)
                     {
                         Console.Error.WriteLine(localizer.LiveFailureState(
@@ -396,7 +396,7 @@ internal static class Program
                 }
 
                 await DelaySafelyAsync(
-                    TimeSpan.FromMinutes(settings.PollIntervalMinutes),
+                    TimeSpan.FromMinutes(GuardSettings.FixedPollIntervalMinutes),
                     cancellationSource.Token).ConfigureAwait(false);
             }
         }
@@ -421,7 +421,7 @@ internal static class Program
         bool diagnostics)
     {
         ArgumentNullException.ThrowIfNull(settings);
-        return settings.AutomationEnabled && !diagnostics;
+        return settings.AnyAutomationEnabled && !diagnostics;
     }
 
     internal static bool CanReuseClient(
@@ -447,8 +447,17 @@ internal static class Program
         {
             var settings = await settingsStore.LoadOrCreateAsync(
                 cancellationToken).ConfigureAwait(false);
+            var updatedSettings = settings with
+            {
+                RemainingThresholdPercent =
+                    automationEnabled
+                        ? settings.RemainingThresholdPercent
+                            ?? GuardSettings.MinimumThreshold
+                        : settings.RemainingThresholdPercent,
+                AutomationEnabled = automationEnabled,
+            };
             await settingsStore.SaveAsync(
-                settings with { AutomationEnabled = automationEnabled },
+                updatedSettings,
                 cancellationToken).ConfigureAwait(false);
             Console.WriteLine($"automationEnabled={automationEnabled.ToString().ToLowerInvariant()}");
             return 0;
@@ -474,9 +483,11 @@ internal static class Program
                     ? "evaluation_blocked"
                     : "automation_disabled",
                 ToCode(evaluation.Decision.Reason),
-                "weekly",
+                ToTriggerCode(evaluation.Decision.SelectedLimit),
                 evaluation.Decision.TriggerWindow?.RemainingPercent,
-                settings.RemainingThresholdPercent,
+                evaluation.Decision.SelectedLimit is { } selectedLimit
+                    ? settings.GetRemainingThresholdPercent(selectedLimit)
+                    : null,
                 evaluation.AvailableCreditCount,
                 DuplicateSuppressed: null,
                 ComponentCategory: "monitor"),
@@ -541,9 +552,11 @@ internal static class Program
                     result.ConsumeAttempted ? "live_consume" : "live_poll",
                     outcome,
                     reason,
-                    "weekly",
+                    ToTriggerCode(result.Evaluation.Decision.SelectedLimit),
                     result.Evaluation.Decision.TriggerWindow?.RemainingPercent,
-                    settings.RemainingThresholdPercent,
+                    result.Evaluation.Decision.SelectedLimit is { } selectedLimit
+                        ? settings.GetRemainingThresholdPercent(selectedLimit)
+                        : null,
                     result.Evaluation.AvailableCreditCount,
                     result.Kind == LiveResetCycleKind.DuplicateSuppressed,
                     "coordinator"),
@@ -628,8 +641,15 @@ internal static class Program
         Console.WriteLine();
         Console.WriteLine(DateTimeOffset.Now.ToString("u"));
         PrintWindow(localizer, localizer.Weekly, evaluation.Weekly);
+        PrintWindow(localizer, localizer.FiveHour, evaluation.FiveHour);
         Console.WriteLine(
-            $"{localizer.Threshold}: {settings.RemainingThresholdPercent}%");
+            $"{localizer.Weekly} {localizer.Threshold}: "
+                + FormatThreshold(
+                    settings.WeeklyRemainingThresholdPercent));
+        Console.WriteLine(
+            $"{localizer.FiveHour} {localizer.Threshold}: "
+                + FormatThreshold(
+                    settings.FiveHourRemainingThresholdPercent));
         Console.WriteLine(
             $"{localizer.Credits}: {evaluation.AvailableCreditCount?.ToString() ?? localizer.Unknown}");
         Console.WriteLine(
@@ -647,8 +667,15 @@ internal static class Program
         Console.WriteLine();
         Console.WriteLine(DateTimeOffset.Now.ToString("u"));
         PrintWindow(localizer, localizer.Weekly, evaluation.Weekly);
+        PrintWindow(localizer, localizer.FiveHour, evaluation.FiveHour);
         Console.WriteLine(
-            $"{localizer.Threshold}: {settings.RemainingThresholdPercent}%");
+            $"{localizer.Weekly} {localizer.Threshold}: "
+                + FormatThreshold(
+                    settings.WeeklyRemainingThresholdPercent));
+        Console.WriteLine(
+            $"{localizer.FiveHour} {localizer.Threshold}: "
+                + FormatThreshold(
+                    settings.FiveHourRemainingThresholdPercent));
         Console.WriteLine(
             $"{localizer.Credits}: {evaluation.AvailableCreditCount?.ToString() ?? localizer.Unknown}");
         Console.WriteLine(
@@ -690,6 +717,7 @@ internal static class Program
             var refreshedTrigger = engine.EvaluateTrigger(settings, refreshed, now);
             Console.WriteLine(localizer.RefreshCompleted);
             PrintWindow(localizer, localizer.Weekly, refreshedTrigger.Weekly);
+            PrintWindow(localizer, localizer.FiveHour, refreshedTrigger.FiveHour);
             Console.WriteLine(
                 $"{localizer.Credits}: {refreshed.ResetCredits?.AvailableCount.ToString() ?? localizer.Unknown}");
         }
@@ -836,12 +864,25 @@ internal static class Program
         }
     }
 
+    private static string FormatThreshold(int? threshold) =>
+        threshold is { } value
+            ? $"{value}%"
+            : "-";
+
     private static string ToCode<T>(T value)
         where T : struct, Enum => string.Concat(
             value.ToString().Select((character, index) =>
                 char.IsUpper(character) && index > 0
                     ? $"_{char.ToLowerInvariant(character)}"
                     : char.ToLowerInvariant(character).ToString()));
+
+    private static string ToTriggerCode(TriggerLimit? triggerLimit) =>
+        triggerLimit switch
+        {
+            TriggerLimit.Weekly => "weekly",
+            TriggerLimit.FiveHour => "fiveHour",
+            _ => "account",
+        };
 
     private static string ToWireOutcome(ConsumeResetCreditOutcome outcome) => outcome switch
     {

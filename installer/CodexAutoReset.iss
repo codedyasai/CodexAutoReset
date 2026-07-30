@@ -4,7 +4,7 @@
 #define LegacyAppExecutable "CodexResetGuard.exe"
 
 #ifndef AppVersion
-  #define AppVersion "0.2.13"
+  #define AppVersion "0.3.5"
 #endif
 
 #ifndef PublishDir
@@ -41,7 +41,7 @@ SignedUninstaller=no
 VersionInfoVersion={#AppVersion}.0
 VersionInfoProductVersion={#AppVersion}
 VersionInfoProductName={#AppName}
-VersionInfoDescription=Codex 주간 한도 자동 초기화 도구
+VersionInfoDescription=Codex 주간·5시간 한도 자동 초기화 도구
 VersionInfoCompany={#AppName}
 VersionInfoCopyright=Apache-2.0
 

@@ -17,7 +17,7 @@ public sealed class SafetyStatusPresentationTests
             yield return
             [
                 "live_recovery_pending",
-                "초기화권 사용 후 주간 잔여량 회복을 확인하고 있습니다. 확인 전에는 추가 초기화권을 사용하지 않습니다.",
+                "초기화권 사용 후 설정한 한도들의 잔여량 회복을 확인하고 있습니다. 확인 전에는 추가 초기화권을 사용하지 않습니다.",
                 "안전 대기 · 초기화 후 잔여량 회복 확인 중",
                 false,
             ];
@@ -78,7 +78,7 @@ public sealed class SafetyStatusPresentationTests
 
         Assert.IsFalse(saved);
         Assert.AreEqual(
-            "잔여량 임계값은 1~99%의 정수로 입력하세요.",
+            "주간 잔여량 임계값은 공란 또는 0~99%의 정수로 입력하세요.",
             fixture.ViewModel.SaveStatus);
     }
 
@@ -95,8 +95,61 @@ public sealed class SafetyStatusPresentationTests
         Assert.IsTrue(saved);
         Assert.AreEqual(99, persisted.RemainingThresholdPercent);
         Assert.AreEqual(
-            "잔여량 임계값을 99%로 적용했습니다.",
+            GuardSettings.Default.FiveHourRemainingThresholdPercent,
+            persisted.FiveHourRemainingThresholdPercent);
+        Assert.AreEqual(
+            "주간 한도 잔여량 임계값을 99%로 적용했습니다.",
             fixture.ViewModel.SaveStatus);
+    }
+
+    [TestMethod]
+    public async Task FiveHourThresholdAtOneHundred_IsRejectedWithCurrentRange()
+    {
+        await using var fixture = new ViewModelFixture();
+        fixture.ViewModel.FiveHourThresholdText = "100";
+
+        var saved = await fixture.ViewModel.SaveFiveHourThresholdAsync();
+
+        Assert.IsFalse(saved);
+        Assert.AreEqual(
+            "5시간 잔여량 임계값은 공란 또는 0~99%의 정수로 입력하세요.",
+            fixture.ViewModel.SaveStatus);
+        Assert.AreEqual(
+            GuardSettings.Default.FiveHourRemainingThresholdPercent,
+            (await fixture.SettingsStore.LoadAsync(CancellationToken.None))
+                .FiveHourRemainingThresholdPercent);
+    }
+
+    [TestMethod]
+    public async Task FiveHourThresholdAtNinetyNine_PersistsIndependently()
+    {
+        await using var fixture = new ViewModelFixture();
+        fixture.ViewModel.FiveHourThresholdText = "99";
+
+        var saved = await fixture.ViewModel.SaveFiveHourThresholdAsync();
+        var persisted = await fixture.SettingsStore.LoadAsync(
+            CancellationToken.None);
+
+        Assert.IsTrue(saved);
+        Assert.AreEqual(
+            GuardSettings.Default.RemainingThresholdPercent,
+            persisted.RemainingThresholdPercent);
+        Assert.AreEqual(99, persisted.FiveHourRemainingThresholdPercent);
+        Assert.AreEqual(
+            GuardSettings.FixedPollIntervalMinutes,
+            persisted.PollIntervalMinutes);
+        Assert.AreEqual(
+            "5시간 한도 잔여량 임계값을 99%로 적용했습니다.",
+            fixture.ViewModel.SaveStatus);
+    }
+
+    [TestMethod]
+    public void TrayUsageFallbacks_UseAsciiHyphen()
+    {
+        Assert.AreEqual("-", FormatTrayUsage("FormatRemaining", string.Empty));
+        Assert.AreEqual("-", FormatTrayUsage("FormatRemaining", "-"));
+        Assert.AreEqual("-", FormatTrayUsage("ToTooltipRemaining", string.Empty));
+        Assert.AreEqual("-", FormatTrayUsage("ToTooltipRemaining", "-"));
     }
 
     private static void ApplySnapshot(
@@ -117,6 +170,15 @@ public sealed class SafetyStatusPresentationTests
             BindingFlags.Static | BindingFlags.NonPublic);
         Assert.IsNotNull(method);
         return (string)method.Invoke(null, [statusCode])!;
+    }
+
+    private static string FormatTrayUsage(string methodName, string value)
+    {
+        var method = typeof(TrayIconHost).GetMethod(
+            methodName,
+            BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.IsNotNull(method);
+        return (string)method.Invoke(null, [value])!;
     }
 
     private sealed class ViewModelFixture : IAsyncDisposable

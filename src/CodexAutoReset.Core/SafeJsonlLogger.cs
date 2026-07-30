@@ -144,7 +144,7 @@ public sealed class SafeJsonlLogger
         StringComparer.Ordinal);
 
     private static readonly HashSet<string> AllowedTriggerLimits = new(
-        ["weekly"],
+        ["weekly", "fiveHour", "account"],
         StringComparer.Ordinal);
 
     private static readonly HashSet<string> AllowedComponentCategories = new(

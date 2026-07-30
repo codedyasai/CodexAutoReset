@@ -39,10 +39,37 @@ public sealed class SettingsUpdateService
     public Task<GuardSettings> SaveAutomationEnabledAsync(
         bool automationEnabled,
         CancellationToken cancellationToken) =>
+        SaveAutomationEnabledAsync(
+            TriggerLimit.Weekly,
+            automationEnabled,
+            cancellationToken);
+
+    public Task<GuardSettings> SaveAutomationEnabledAsync(
+        TriggerLimit triggerLimit,
+        bool automationEnabled,
+        CancellationToken cancellationToken) =>
         SaveSettingsPatchAsync(
-            settings => settings with
+            settings => triggerLimit switch
             {
-                AutomationEnabled = automationEnabled,
+                TriggerLimit.Weekly => settings with
+                {
+                    RemainingThresholdPercent =
+                        automationEnabled
+                            ? settings.RemainingThresholdPercent
+                                ?? GuardSettings.MinimumThreshold
+                            : settings.RemainingThresholdPercent,
+                    AutomationEnabled = automationEnabled,
+                },
+                TriggerLimit.FiveHour => settings with
+                {
+                    FiveHourRemainingThresholdPercent =
+                        automationEnabled
+                            ? settings.FiveHourRemainingThresholdPercent
+                                ?? GuardSettings.MinimumThreshold
+                            : settings.FiveHourRemainingThresholdPercent,
+                    FiveHourAutomationEnabled = automationEnabled,
+                },
+                _ => throw new ArgumentOutOfRangeException(nameof(triggerLimit)),
             },
             cancellationToken);
 
@@ -59,10 +86,34 @@ public sealed class SettingsUpdateService
     public Task<GuardSettings> SaveRemainingThresholdPercentAsync(
         int remainingThresholdPercent,
         CancellationToken cancellationToken) =>
+        SaveRemainingThresholdPercentAsync(
+            TriggerLimit.Weekly,
+            remainingThresholdPercent,
+            cancellationToken);
+
+    public Task<GuardSettings> SaveRemainingThresholdPercentAsync(
+        TriggerLimit triggerLimit,
+        int? remainingThresholdPercent,
+        CancellationToken cancellationToken) =>
         SaveSettingsPatchAsync(
-            settings => settings with
+            settings => triggerLimit switch
             {
-                RemainingThresholdPercent = remainingThresholdPercent,
+                TriggerLimit.Weekly => settings with
+                {
+                    RemainingThresholdPercent = remainingThresholdPercent,
+                    AutomationEnabled =
+                        remainingThresholdPercent.HasValue
+                        && settings.AutomationEnabled,
+                },
+                TriggerLimit.FiveHour => settings with
+                {
+                    FiveHourRemainingThresholdPercent =
+                        remainingThresholdPercent,
+                    FiveHourAutomationEnabled =
+                        remainingThresholdPercent.HasValue
+                        && settings.FiveHourAutomationEnabled,
+                },
+                _ => throw new ArgumentOutOfRangeException(nameof(triggerLimit)),
             },
             cancellationToken);
 
@@ -165,7 +216,7 @@ public sealed class SettingsUpdateService
             newSettings.StartWithWindows,
             currentExecutablePath);
 
-        if (newSettings.AutomationEnabled)
+        if (newSettings.AnyAutomationEnabled)
         {
             using var mutation = startupService.BeginChange(
                 newSettings.StartWithWindows,

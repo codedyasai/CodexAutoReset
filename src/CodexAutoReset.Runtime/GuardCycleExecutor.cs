@@ -204,7 +204,7 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
                         CycleActionKind.Blocked,
                         "live_protocol_blocked");
                 }
-                else if (!settings.AutomationEnabled)
+                else if (!settings.AnyAutomationEnabled)
                 {
                     result = new GuardCycleResult(
                         snapshot,
@@ -315,7 +315,7 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
         }
         catch (Exception exception) when (!IsFatal(exception))
         {
-            if (settings.AutomationEnabled
+            if (settings.AnyAutomationEnabled
                 && exception is not OperationCanceledException
                 && ClassifyFailure(exception)
                     == LiveResetFailureDisposition.Unknown)
@@ -417,7 +417,10 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
             displayedEvaluation = new EvaluationResult(
                 refreshedEvaluation.Weekly,
                 liveResult.Evaluation.Decision,
-                refreshedEvaluation.AvailableCreditCount);
+                refreshedEvaluation.AvailableCreditCount)
+            {
+                FiveHour = refreshedEvaluation.FiveHour,
+            };
         }
 
         var (actionKind, actionCode) = liveResult.Kind switch
@@ -512,9 +515,11 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
                     eventType,
                     ToLogOutcome(result.ActionCode),
                     ToCode(result.Evaluation.Decision.Reason),
-                    "weekly",
+                    ToTriggerCode(result.Evaluation.Decision.SelectedLimit),
                     result.Evaluation.Decision.TriggerWindow?.RemainingPercent,
-                    settings.RemainingThresholdPercent,
+                    result.Evaluation.Decision.SelectedLimit is { } selectedLimit
+                        ? settings.GetRemainingThresholdPercent(selectedLimit)
+                        : null,
                     result.Evaluation.AvailableCreditCount,
                     result.DuplicateSuppressed,
                     "desktop_monitor"),
@@ -551,8 +556,8 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
                     "failure",
                     "blocked",
                     reason,
-                    "weekly",
-                    ThresholdPercent: settings.RemainingThresholdPercent,
+                    "account",
+                    ThresholdPercent: null,
                     ComponentCategory: "desktop_monitor"),
                 cancellationToken.IsCancellationRequested
                     ? CancellationToken.None
@@ -613,7 +618,7 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
         }
 
         ResetReadCompatibilityFailures();
-        if (settings.AutomationEnabled
+        if (settings.AnyAutomationEnabled
             && disposition == LiveResetFailureDisposition.Unknown)
         {
             await BlockFailureAsync(
@@ -776,7 +781,7 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
         var attempts = await coordinator.ReadAttemptsAsync(CancellationToken.None)
             .ConfigureAwait(false);
         var pending = attempts.SingleOrDefault(attempt =>
-            IsSameTriggerContext(settings, trigger, attempt));
+            IsSameTriggerContext(settings, trigger, attempt, now));
         if (pending is null)
         {
             throw new LiveStateException("live_attempt_missing");
@@ -806,20 +811,35 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
     private static bool IsSameTriggerContext(
         GuardSettings settings,
         TriggerEvaluation trigger,
-        LiveAttemptSnapshot attempt) =>
-        attempt.Phase == LiveAttemptPhase.Pending
-        && settings.AutomationEnabled
-        && attempt.TriggerLimit == TriggerLimit.Weekly
-        && settings.RemainingThresholdPercent == attempt.ThresholdPercent
-        && trigger.ThresholdReached
-        && trigger.SelectedWindow is not null
-        && trigger.SelectedWindow.NormalizedDurationMinutes
-            == attempt.NormalizedDurationMinutes
-        && trigger.SelectedWindow.ResetsAt == attempt.ResetsAt
-        && string.Equals(
-            trigger.IntervalKey,
-            attempt.IntervalKey,
-            StringComparison.Ordinal);
+        LiveAttemptSnapshot attempt,
+        DateTimeOffset now)
+    {
+        var reading = attempt.TriggerLimit switch
+        {
+            TriggerLimit.Weekly => trigger.Weekly,
+            TriggerLimit.FiveHour => trigger.FiveHour,
+            _ => null,
+        };
+        return attempt.Phase == LiveAttemptPhase.Pending
+            && settings.IsAutomationEnabled(attempt.TriggerLimit)
+            && settings.GetRemainingThresholdPercent(attempt.TriggerLimit)
+                == attempt.ThresholdPercent
+            && reading is not null
+            && reading.RemainingPercent <= attempt.ThresholdPercent
+            && reading.NormalizedDurationMinutes
+                == attempt.NormalizedDurationMinutes
+            && reading.ResetsAt == attempt.ResetsAt
+            && reading.ResetsAt
+                >= now.ToUnixTimeSeconds() + (5 * 60);
+    }
+
+    private static string ToTriggerCode(TriggerLimit? triggerLimit) =>
+        triggerLimit switch
+        {
+            TriggerLimit.Weekly => "weekly",
+            TriggerLimit.FiveHour => "fiveHour",
+            _ => "account",
+        };
 
     private static string ToCode<T>(T value)
         where T : struct, Enum => string.Concat(

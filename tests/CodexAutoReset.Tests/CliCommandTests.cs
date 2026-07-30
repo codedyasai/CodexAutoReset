@@ -36,7 +36,11 @@ public sealed class CliCommandTests
         Assert.AreEqual("automationEnabled=true", result.StandardOutput.Trim());
         Assert.AreEqual(string.Empty, result.StandardError);
         Assert.AreEqual(
-            original with { AutomationEnabled = true },
+            original with
+            {
+                AutomationEnabled = true,
+                PollIntervalMinutes = GuardSettings.FixedPollIntervalMinutes,
+            },
             await store.LoadAsync(CancellationToken.None));
     }
 
@@ -59,7 +63,11 @@ public sealed class CliCommandTests
         Assert.AreEqual("automationEnabled=false", result.StandardOutput.Trim());
         Assert.AreEqual(string.Empty, result.StandardError);
         Assert.AreEqual(
-            original with { AutomationEnabled = false },
+            original with
+            {
+                AutomationEnabled = false,
+                PollIntervalMinutes = GuardSettings.FixedPollIntervalMinutes,
+            },
             await store.LoadAsync(CancellationToken.None));
     }
 
@@ -95,10 +103,7 @@ public sealed class CliCommandTests
     [TestMethod]
     public void DiagnosticsAlwaysDisablesAutomation()
     {
-        var liveSettings = GuardSettings.Default with
-        {
-            AutomationEnabled = true,
-        };
+        var liveSettings = WeeklyLiveSettings();
 
         Assert.IsTrue(Program.IsAutomationExecutionAllowed(liveSettings, diagnostics: false));
         Assert.IsFalse(Program.IsAutomationExecutionAllowed(liveSettings, diagnostics: true));
@@ -203,7 +208,7 @@ public sealed class CliCommandTests
             new LiveAttemptCandidate(
                 FormattableString.Invariant(
                     $"codex|weekly|10080|{resetAt}"),
-                GuardSettings.Default.RemainingThresholdPercent,
+                7,
                 10_080,
                 resetAt),
             "test-credit",
@@ -342,11 +347,7 @@ public sealed class CliCommandTests
             client,
             new FakeFailureClassifier());
         var logger = new SafeJsonlLogger(Path.Combine(directory.Path, "Logs"));
-        var settings = GuardSettings.Default with
-        {
-            UiLanguage = UiLanguage.English,
-            AutomationEnabled = true,
-        };
+        var settings = WeeklyLiveSettings();
 
         var captured = await CaptureConsoleAsync(() =>
             Program.ProcessAutomationSnapshotAsync(
@@ -370,7 +371,7 @@ public sealed class CliCommandTests
         StringAssert.Contains(captured.StandardOutput, $"Reset outcome: {wireOutcome}");
         StringAssert.Contains(
             captured.StandardOutput,
-            "The weekly limit is the trigger; the server determines the actual reset scope.");
+            "Configured limits are triggers; the server determines the actual reset scope.");
         StringAssert.Contains(captured.StandardOutput, "Completed a full usage refresh");
         Assert.AreEqual(string.Empty, captured.StandardError);
 
@@ -410,11 +411,7 @@ public sealed class CliCommandTests
             client,
             new FakeFailureClassifier());
         var logger = new SafeJsonlLogger(Path.Combine(directory.Path, "Logs"));
-        var settings = GuardSettings.Default with
-        {
-            UiLanguage = UiLanguage.English,
-            AutomationEnabled = true,
-        };
+        var settings = WeeklyLiveSettings();
 
         var captured = await CaptureConsoleAsync(() =>
             Program.ProcessAutomationSnapshotAsync(
@@ -468,11 +465,7 @@ public sealed class CliCommandTests
                 engine,
                 new SafeJsonlLogger(Path.Combine(directory.Path, "Logs")),
                 new ConsoleLocalizer(UiLanguage.English),
-                GuardSettings.Default with
-                {
-                    AutomationEnabled = true,
-                    UiLanguage = UiLanguage.English,
-                },
+                WeeklyLiveSettings(),
                 CreateLiveSnapshot(now, weeklyUsedPercent: 93, creditCount: 1),
                 now,
                 cancellationSource.Token));
@@ -501,11 +494,7 @@ public sealed class CliCommandTests
             new FakeSecretProtector(),
             client,
             new FakeFailureClassifier());
-        var settings = GuardSettings.Default with
-        {
-            AutomationEnabled = true,
-            UiLanguage = UiLanguage.English,
-        };
+        var settings = WeeklyLiveSettings();
 
         var captured = await CaptureConsoleAsync(() =>
             Program.ProcessAutomationSnapshotAsync(
@@ -544,11 +533,7 @@ public sealed class CliCommandTests
             firstClient,
             new FakeFailureClassifier());
         var logger = new SafeJsonlLogger(Path.Combine(directory.Path, "Logs"));
-        var settings = GuardSettings.Default with
-        {
-            AutomationEnabled = true,
-            UiLanguage = UiLanguage.English,
-        };
+        var settings = WeeklyLiveSettings();
 
         await Assert.ThrowsExceptionAsync<IOException>(() =>
             Program.ProcessAutomationSnapshotAsync(
@@ -635,6 +620,15 @@ public sealed class CliCommandTests
             yield return [new[] { "--enable-automation", "--help" }];
         }
     }
+
+    private static GuardSettings WeeklyLiveSettings() => GuardSettings.Default with
+    {
+        RemainingThresholdPercent = 7,
+        AutomationEnabled = true,
+        FiveHourRemainingThresholdPercent = null,
+        FiveHourAutomationEnabled = false,
+        UiLanguage = UiLanguage.English,
+    };
 
     private static async Task<CliResult> RunCliAsync(
         string appDataRoot,

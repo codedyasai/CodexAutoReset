@@ -48,7 +48,7 @@ public sealed class LiveResetCoordinator
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (settings.AutomationEnabled
+            if (settings.AnyAutomationEnabled
                 && safetyLatch.BlockReason is { } processBlockReason)
             {
                 return new LiveResetCycleResult(
@@ -63,7 +63,7 @@ public sealed class LiveResetCoordinator
             }
 
             var evaluation = decisionEngine.Evaluate(settings, snapshot, now);
-            if (!settings.AutomationEnabled)
+            if (!settings.AnyAutomationEnabled)
             {
                 return CreateResult(LiveResetCycleKind.AutomationDisabled, evaluation);
             }
@@ -83,8 +83,8 @@ public sealed class LiveResetCoordinator
 
             var recoveryConfirmedThisCycle = await store.MarkRefreshedAsync(
                 snapshot.ObservedAt,
-                evaluation.Weekly?.RemainingPercent,
-                settings.RemainingThresholdPercent,
+                evaluation,
+                settings,
                 now,
                 cancellationToken).ConfigureAwait(false);
 
@@ -132,13 +132,19 @@ public sealed class LiveResetCoordinator
                 ?? throw new LiveStateException("live_candidate_invalid");
             var intervalKey = evaluation.Decision.IntervalKey
                 ?? throw new LiveStateException("live_candidate_invalid");
+            var selectedLimit = evaluation.Decision.SelectedLimit
+                ?? throw new LiveStateException("live_candidate_invalid");
             var creditId = evaluation.Decision.SelectedCredit?.Id
                 ?? throw new LiveStateException("live_credit_invalid");
+            var thresholdPercent =
+                settings.GetRemainingThresholdPercent(selectedLimit)
+                ?? throw new LiveStateException("live_candidate_invalid");
             var candidate = new LiveAttemptCandidate(
                 intervalKey,
-                settings.RemainingThresholdPercent,
+                thresholdPercent,
                 window.NormalizedDurationMinutes,
-                window.ResetsAt);
+                window.ResetsAt,
+                selectedLimit);
             var prepared = await store.TryPrepareAsync(
                 candidate,
                 creditId,
@@ -245,18 +251,7 @@ public sealed class LiveResetCoordinator
                 activeSnapshot);
         }
 
-        if (activeSnapshot.TriggerLimit == TriggerLimit.FiveHour)
-        {
-            return CreateResult(
-                LiveResetCycleKind.Blocked,
-                evaluation,
-                activeSnapshot with
-                {
-                    BlockReason = LiveAttemptBlockReason.LegacyTriggerUnsupported,
-                });
-        }
-
-        if (!IsSameTriggerContext(settings, trigger, activeSnapshot))
+        if (!IsSameTriggerContext(settings, trigger, activeSnapshot, now))
         {
             var blocked = await store.BlockActiveAsync(
                 LiveAttemptBlockReason.ContextChanged,
@@ -325,6 +320,52 @@ public sealed class LiveResetCoordinator
                 LiveResetCycleKind.Blocked,
                 evaluation,
                 blocked is null ? null : JsonLiveAttemptStore.ToSnapshot(blocked));
+        }
+
+        if (attempt.DispatchCount == 0
+            && settings.IsAutomationEnabled(TriggerLimit.FiveHour))
+        {
+            var preflightLimits = await client.ReadAsync(cancellationToken)
+                .ConfigureAwait(false);
+            var preflightNow = timeProvider.GetUtcNow();
+            var preflightEvaluation = decisionEngine.Evaluate(
+                settings,
+                preflightLimits,
+                preflightNow);
+            var preflightTrigger = decisionEngine.EvaluateTrigger(
+                settings,
+                preflightLimits,
+                preflightNow);
+            var preflightCreditId =
+                preflightEvaluation.Decision.SelectedCredit?.Id;
+            if (!preflightLimits.ConsumeSchemaCompatible
+                || !IsSameTriggerContext(
+                    settings,
+                    preflightTrigger,
+                    JsonLiveAttemptStore.ToSnapshot(attempt),
+                    preflightNow)
+                || !string.Equals(
+                    preflightCreditId,
+                    creditId,
+                    StringComparison.Ordinal))
+            {
+                var blocked = await store.BlockActiveAsync(
+                    LiveAttemptBlockReason.ContextChanged,
+                    preflightNow,
+                    cancellationToken).ConfigureAwait(false);
+                return new LiveResetCycleResult(
+                    LiveResetCycleKind.Blocked,
+                    preflightEvaluation,
+                    blocked is null
+                        ? JsonLiveAttemptStore.ToSnapshot(attempt)
+                        : JsonLiveAttemptStore.ToSnapshot(blocked),
+                    Outcome: null,
+                    ConsumeAttempted: false,
+                    RequiresRefresh: false,
+                    RefreshedRateLimits: preflightLimits);
+            }
+
+            evaluation = preflightEvaluation;
         }
 
         var dispatched = await store.MarkDispatchStartedAsync(
@@ -424,9 +465,12 @@ public sealed class LiveResetCoordinator
             _ = await store.MarkRefreshedAsync(
                 refreshed.ObservedAt,
                 refreshed.ConsumeSchemaCompatible
-                    ? refreshedEvaluation.Weekly?.RemainingPercent
-                    : null,
-                settings.RemainingThresholdPercent,
+                    ? refreshedEvaluation
+                    : new EvaluationResult(
+                        null,
+                        refreshedEvaluation.Decision,
+                        refreshedEvaluation.AvailableCreditCount),
+                settings,
                 timeProvider.GetUtcNow(),
                 CancellationToken.None).ConfigureAwait(false);
         }
@@ -449,19 +493,26 @@ public sealed class LiveResetCoordinator
     private static bool IsSameTriggerContext(
         GuardSettings settings,
         TriggerEvaluation trigger,
-        LiveAttemptSnapshot attempt) =>
-        settings.AutomationEnabled
-        && attempt.TriggerLimit == TriggerLimit.Weekly
-        && settings.RemainingThresholdPercent == attempt.ThresholdPercent
-        && trigger.ThresholdReached
-        && trigger.SelectedWindow is not null
-        && trigger.SelectedWindow.NormalizedDurationMinutes
-            == attempt.NormalizedDurationMinutes
-        && trigger.SelectedWindow.ResetsAt == attempt.ResetsAt
-        && string.Equals(
-            trigger.IntervalKey,
-            attempt.IntervalKey,
-            StringComparison.Ordinal);
+        LiveAttemptSnapshot attempt,
+        DateTimeOffset now)
+    {
+        var reading = attempt.TriggerLimit switch
+        {
+            TriggerLimit.Weekly => trigger.Weekly,
+            TriggerLimit.FiveHour => trigger.FiveHour,
+            _ => null,
+        };
+        return settings.IsAutomationEnabled(attempt.TriggerLimit)
+            && settings.GetRemainingThresholdPercent(attempt.TriggerLimit)
+                == attempt.ThresholdPercent
+            && reading is not null
+            && reading.RemainingPercent <= attempt.ThresholdPercent
+            && reading.NormalizedDurationMinutes
+                == attempt.NormalizedDurationMinutes
+            && reading.ResetsAt == attempt.ResetsAt
+            && reading.ResetsAt
+                >= now.ToUnixTimeSeconds() + (5 * 60);
+    }
 
     private static LiveResetCycleResult CreateResult(
         LiveResetCycleKind kind,

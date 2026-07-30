@@ -43,6 +43,7 @@ public sealed class SettingsUpdateServiceTests
         File.WriteAllBytes(codexPath, [0]);
         var persisted = GuardSettings.Default with
         {
+            RemainingThresholdPercent = 7,
             StartWithWindows = true,
             AutomationEnabled = true,
         };
@@ -82,6 +83,7 @@ public sealed class SettingsUpdateServiceTests
         File.WriteAllBytes(codexPath, [0]);
         var persisted = GuardSettings.Default with
         {
+            RemainingThresholdPercent = 7,
             StartWithWindows = true,
             AutomationEnabled = true,
             CodexExecutablePath = codexPath,
@@ -209,7 +211,7 @@ public sealed class SettingsUpdateServiceTests
     public async Task SaveAsync_PersistsSettingsBeforeChangingRegistry()
     {
         var events = new List<string>();
-        var persisted = GuardSettings.Default;
+        var persisted = LegacyAutomationDisabledSettings;
         var registry = new CountingRegistryStore
         {
             OnWrite = () => events.Add("registry"),
@@ -239,7 +241,7 @@ public sealed class SettingsUpdateServiceTests
     [TestMethod]
     public async Task SaveAsync_DisabledRegistryFailureKeepsPersistedDisabledState()
     {
-        var persisted = GuardSettings.Default;
+        var persisted = LegacyAutomationDisabledSettings;
         var savedValues = new List<GuardSettings>();
         var registry = new CountingRegistryStore
         {
@@ -258,7 +260,7 @@ public sealed class SettingsUpdateServiceTests
 
         var exception = await Assert.ThrowsExceptionAsync<SettingsPartiallyAppliedException>(
             () => service.SaveAsync(
-            GuardSettings.Default,
+            LegacyAutomationDisabledSettings,
             updated,
             executablePath,
             CancellationToken.None));
@@ -281,6 +283,7 @@ public sealed class SettingsUpdateServiceTests
         };
         var target = GuardSettings.Default with
         {
+            RemainingThresholdPercent = 7,
             StartWithWindows = true,
             AutomationEnabled = true,
         };
@@ -309,6 +312,7 @@ public sealed class SettingsUpdateServiceTests
     {
         var enabledSettings = GuardSettings.Default with
         {
+            RemainingThresholdPercent = 7,
             StartWithWindows = true,
             AutomationEnabled = true,
         };
@@ -394,11 +398,11 @@ public sealed class SettingsUpdateServiceTests
     public async Task SaveAsync_ExternalDisableBlocksStaleEnabledOverwrite()
     {
         var registry = new CountingRegistryStore();
-        var previous = GuardSettings.Default with
+        var previous = LegacyAutomationDisabledSettings with
         {
             AutomationEnabled = true,
         };
-        var current = GuardSettings.Default;
+        var current = LegacyAutomationDisabledSettings;
         var proposed = previous with { RemainingThresholdPercent = 12 };
         var saveCount = 0;
         var service = new SettingsUpdateService(
@@ -421,6 +425,15 @@ public sealed class SettingsUpdateServiceTests
         Assert.AreEqual(0, saveCount);
         Assert.AreEqual(0, registry.WriteCount);
     }
+
+    private static GuardSettings LegacyAutomationDisabledSettings =>
+        GuardSettings.Default with
+        {
+            RemainingThresholdPercent = 7,
+            AutomationEnabled = false,
+            FiveHourRemainingThresholdPercent = 7,
+            FiveHourAutomationEnabled = false,
+        };
 
     private sealed class CountingRegistryStore : ICurrentUserRegistryStore
     {

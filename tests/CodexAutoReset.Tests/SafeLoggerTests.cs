@@ -176,6 +176,29 @@ public sealed class SafeLoggerTests
     }
 
     [DataTestMethod]
+    [DataRow("weekly")]
+    [DataRow("fiveHour")]
+    [DataRow("account")]
+    public async Task LoggerAcceptsKnownDualWindowTriggerScopes(
+        string triggerLimit)
+    {
+        using var directory = TemporaryDirectory.Create();
+        var logger = new SafeJsonlLogger(directory.Path);
+
+        await logger.WriteAsync(
+            new SafeLogEvent(
+                DateTimeOffset.UtcNow,
+                "poll",
+                "automation_disabled",
+                TriggerLimit: triggerLimit),
+            CancellationToken.None);
+
+        var json = await File.ReadAllTextAsync(
+            Directory.GetFiles(directory.Path, "*.jsonl").Single());
+        StringAssert.Contains(json, $"\"triggerLimit\":\"{triggerLimit}\"");
+    }
+
+    [DataTestMethod]
     [DataRow(-0.1)]
     [DataRow(100.1)]
     [DataRow(double.NaN)]

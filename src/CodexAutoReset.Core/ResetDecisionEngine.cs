@@ -4,6 +4,7 @@ namespace CodexAutoReset.Core;
 
 public sealed class ResetDecisionEngine
 {
+    private const long FiveHourMinutes = 300;
     private const long WeeklyMinutes = 10_080;
     private const long DurationToleranceMinutes = 1;
     private const long ResetClockSkewSeconds = 60;
@@ -18,8 +19,8 @@ public sealed class ResetDecisionEngine
         var trigger = EvaluateTrigger(settings, accountRateLimits, now);
         if (trigger.SelectedWindow is null)
         {
-            return new EvaluationResult(
-                trigger.Weekly,
+            return CreateEvaluation(
+                trigger,
                 new GuardDecision(
                     DecisionKind.Blocked,
                     trigger.Reason,
@@ -32,14 +33,17 @@ public sealed class ResetDecisionEngine
         var triggerWindow = trigger.SelectedWindow;
         if (!trigger.ThresholdReached)
         {
-            return new EvaluationResult(
-                trigger.Weekly,
+            return CreateEvaluation(
+                trigger,
                 new GuardDecision(
                     DecisionKind.NoAction,
                     trigger.Reason,
                     triggerWindow,
                     null,
-                    trigger.IntervalKey),
+                    trigger.IntervalKey)
+                {
+                    SelectedLimit = trigger.SelectedLimit,
+                },
                 accountRateLimits.ResetCredits?.AvailableCount);
         }
 
@@ -47,8 +51,7 @@ public sealed class ResetDecisionEngine
         if (creditSummary is null)
         {
             return WithDecision(
-                trigger.Weekly,
-                triggerWindow,
+                trigger,
                 DecisionKind.Blocked,
                 DecisionReason.CreditSummaryUnavailable,
                 null,
@@ -58,8 +61,7 @@ public sealed class ResetDecisionEngine
         if (creditSummary.AvailableCount < 0)
         {
             return WithDecision(
-                trigger.Weekly,
-                triggerWindow,
+                trigger,
                 DecisionKind.Blocked,
                 DecisionReason.InvalidCreditCount,
                 null,
@@ -69,8 +71,7 @@ public sealed class ResetDecisionEngine
         if (creditSummary.AvailableCount == 0)
         {
             return WithDecision(
-                trigger.Weekly,
-                triggerWindow,
+                trigger,
                 DecisionKind.NoAction,
                 DecisionReason.NoCredits,
                 null,
@@ -80,8 +81,7 @@ public sealed class ResetDecisionEngine
         if (creditSummary.Credits is null)
         {
             return WithDecision(
-                trigger.Weekly,
-                triggerWindow,
+                trigger,
                 DecisionKind.Blocked,
                 DecisionReason.CreditDetailsUnavailable,
                 null,
@@ -107,8 +107,7 @@ public sealed class ResetDecisionEngine
         if (eligibleCredit is null)
         {
             return WithDecision(
-                trigger.Weekly,
-                triggerWindow,
+                trigger,
                 DecisionKind.Blocked,
                 DecisionReason.NoEligibleCredit,
                 null,
@@ -116,8 +115,7 @@ public sealed class ResetDecisionEngine
         }
 
         return WithDecision(
-            trigger.Weekly,
-            triggerWindow,
+            trigger,
             DecisionKind.WouldConsume,
             DecisionReason.ThresholdReached,
             eligibleCredit,
@@ -143,7 +141,16 @@ public sealed class ResetDecisionEngine
                 false);
         }
 
-        var weekly = FindWeeklyWindow(bucketResult.Snapshot, now);
+        var weekly = FindWindow(
+            bucketResult.Snapshot,
+            TriggerLimit.Weekly,
+            now,
+            required: true);
+        var fiveHour = FindWindow(
+            bucketResult.Snapshot,
+            TriggerLimit.FiveHour,
+            now,
+            required: false);
         if (weekly.Reading is null)
         {
             return new TriggerEvaluation(
@@ -151,32 +158,129 @@ public sealed class ResetDecisionEngine
                 null,
                 weekly.Reason,
                 null,
-                false);
+                false)
+            {
+                FiveHour = fiveHour.Reading,
+            };
         }
 
-        var intervalKey = BuildIntervalKey(bucketResult.Snapshot, weekly.Reading);
-        if (weekly.Reason == DecisionReason.ScheduledResetImminent)
+        if (fiveHour.Reading is null
+            && fiveHour.Reason is not DecisionReason.AboveThreshold)
         {
             return new TriggerEvaluation(
                 weekly.Reading,
-                weekly.Reading,
-                DecisionReason.ScheduledResetImminent,
-                intervalKey,
-                false);
+                null,
+                fiveHour.Reason,
+                null,
+                false)
+            {
+                FiveHour = null,
+            };
         }
 
-        var thresholdReached = weekly.Reading.RemainingPercent
-            <= settings.RemainingThresholdPercent;
+        var candidates = CreateTriggerCandidates(settings, weekly, fiveHour);
+        var reached = candidates
+            .Where(candidate => candidate.Window.Reason
+                != DecisionReason.ScheduledResetImminent)
+            .Where(candidate => candidate.Window.Reading!.RemainingPercent
+                <= candidate.ThresholdPercent)
+            .OrderBy(candidate => candidate.Limit == TriggerLimit.Weekly ? 0 : 1)
+            .FirstOrDefault();
+        if (reached is not null)
+        {
+            return CreateTriggerEvaluation(
+                bucketResult.Snapshot,
+                weekly.Reading,
+                fiveHour.Reading,
+                reached,
+                DecisionReason.ThresholdReached,
+                thresholdReached: true);
+        }
 
-        return new TriggerEvaluation(
+        var imminent = candidates
+            .Where(candidate => candidate.Window.Reason
+                == DecisionReason.ScheduledResetImminent)
+            .Where(candidate => candidate.Window.Reading!.RemainingPercent
+                <= candidate.ThresholdPercent)
+            .OrderBy(candidate => candidate.Limit == TriggerLimit.Weekly ? 0 : 1)
+            .FirstOrDefault();
+        if (imminent is not null)
+        {
+            return CreateTriggerEvaluation(
+                bucketResult.Snapshot,
+                weekly.Reading,
+                fiveHour.Reading,
+                imminent,
+                DecisionReason.ScheduledResetImminent,
+                thresholdReached: false);
+        }
+
+        var selected = candidates
+            .OrderBy(candidate => candidate.Limit == TriggerLimit.Weekly ? 0 : 1)
+            .FirstOrDefault()
+            ?? new TriggerCandidate(
+                TriggerLimit.Weekly,
+                weekly,
+                GuardSettings.MinimumThreshold);
+
+        return CreateTriggerEvaluation(
+            bucketResult.Snapshot,
             weekly.Reading,
-            weekly.Reading,
-            thresholdReached
-                ? DecisionReason.ThresholdReached
-                : DecisionReason.AboveThreshold,
-            intervalKey,
-            thresholdReached);
+            fiveHour.Reading,
+            selected,
+            DecisionReason.AboveThreshold,
+            thresholdReached: false);
     }
+
+    private static IReadOnlyList<TriggerCandidate> CreateTriggerCandidates(
+        GuardSettings settings,
+        WindowSelection weekly,
+        WindowSelection fiveHour)
+    {
+        var candidates = new List<TriggerCandidate>(2);
+
+        if (weekly.Reading is not null
+            && settings.IsAutomationEnabled(TriggerLimit.Weekly)
+            && settings.WeeklyRemainingThresholdPercent is { } weeklyThreshold)
+        {
+            candidates.Add(new TriggerCandidate(
+                TriggerLimit.Weekly,
+                weekly,
+                weeklyThreshold));
+        }
+
+        if (fiveHour.Reading is not null
+            && settings.IsAutomationEnabled(TriggerLimit.FiveHour)
+            && settings.FiveHourRemainingThresholdPercent is { } threshold)
+        {
+            candidates.Add(new TriggerCandidate(
+                TriggerLimit.FiveHour,
+                fiveHour,
+                threshold));
+        }
+
+        return candidates;
+    }
+
+    private static TriggerEvaluation CreateTriggerEvaluation(
+        RateLimitSnapshot snapshot,
+        WindowReading weekly,
+        WindowReading? fiveHour,
+        TriggerCandidate selected,
+        DecisionReason reason,
+        bool thresholdReached) => new(
+            weekly,
+            selected.Window.Reading,
+            reason,
+            BuildIntervalKey(
+                snapshot,
+                selected.Window.Reading!,
+                selected.Limit),
+            thresholdReached)
+        {
+            FiveHour = fiveHour,
+            SelectedLimit = selected.Limit,
+        };
 
     private static BucketSelection SelectCodexBucket(AccountRateLimits limits)
     {
@@ -213,21 +317,33 @@ public sealed class ResetDecisionEngine
         return new BucketSelection(null, DecisionReason.AmbiguousLegacyBucket);
     }
 
-    private static WindowSelection FindWeeklyWindow(
+    private static WindowSelection FindWindow(
         RateLimitSnapshot snapshot,
-        DateTimeOffset now)
+        TriggerLimit triggerLimit,
+        DateTimeOffset now,
+        bool required)
     {
+        var expectedDurationMinutes = triggerLimit switch
+        {
+            TriggerLimit.FiveHour => FiveHourMinutes,
+            TriggerLimit.Weekly => WeeklyMinutes,
+            _ => throw new ArgumentOutOfRangeException(nameof(triggerLimit)),
+        };
         var candidates = new[] { snapshot.Primary, snapshot.Secondary }
             .Where(window => window is not null)
             .Cast<RateLimitWindow>()
             .Where(window => window.WindowDurationMins is long duration
-                && duration >= WeeklyMinutes - DurationToleranceMinutes
-                && duration <= WeeklyMinutes + DurationToleranceMinutes)
+                && duration >= expectedDurationMinutes - DurationToleranceMinutes
+                && duration <= expectedDurationMinutes + DurationToleranceMinutes)
             .ToArray();
 
         if (candidates.Length == 0)
         {
-            return new WindowSelection(null, DecisionReason.SelectedWindowMissing);
+            return new WindowSelection(
+                null,
+                required
+                    ? DecisionReason.SelectedWindowMissing
+                    : DecisionReason.AboveThreshold);
         }
 
         if (candidates.Length > 1)
@@ -248,7 +364,8 @@ public sealed class ResetDecisionEngine
         }
 
         var nowUnix = now.ToUnixTimeSeconds();
-        var maximumResetAt = nowUnix + (WeeklyMinutes * 60) + ResetUpperSlackSeconds;
+        var maximumResetAt =
+            nowUnix + (expectedDurationMinutes * 60) + ResetUpperSlackSeconds;
         if (resetsAt < nowUnix - ResetClockSkewSeconds || resetsAt > maximumResetAt)
         {
             return new WindowSelection(null, DecisionReason.InvalidResetTime);
@@ -259,7 +376,7 @@ public sealed class ResetDecisionEngine
                 selected.UsedPercent,
                 100d - selected.UsedPercent,
                 selected.WindowDurationMins!.Value,
-                WeeklyMinutes,
+                expectedDurationMinutes,
                 resetsAt),
             resetsAt < nowUnix + MinimumResetLeadTimeSeconds
                 ? DecisionReason.ScheduledResetImminent
@@ -267,33 +384,50 @@ public sealed class ResetDecisionEngine
     }
 
     private static EvaluationResult WithDecision(
-        WindowReading? weekly,
-        WindowReading triggerWindow,
+        TriggerEvaluation trigger,
         DecisionKind kind,
         DecisionReason reason,
         ResetCredit? credit,
         long? availableCreditCount,
-        string? intervalKey = null) => new(
-            weekly,
+        string? intervalKey = null) => CreateEvaluation(
+            trigger,
             new GuardDecision(
                 kind,
                 reason,
-                triggerWindow,
+                trigger.SelectedWindow,
                 credit,
-                intervalKey),
+                intervalKey)
+            {
+                SelectedLimit = trigger.SelectedLimit,
+            },
             availableCreditCount);
+
+    private static EvaluationResult CreateEvaluation(
+        TriggerEvaluation trigger,
+        GuardDecision decision,
+        long? availableCreditCount) => new(
+            trigger.Weekly,
+            decision,
+            availableCreditCount)
+        {
+            FiveHour = trigger.FiveHour,
+        };
 
     private static string BuildIntervalKey(
         RateLimitSnapshot snapshot,
-        WindowReading window)
+        WindowReading window,
+        TriggerLimit triggerLimit)
     {
         var limitId = string.IsNullOrWhiteSpace(snapshot.LimitId)
             ? "codex"
             : snapshot.LimitId.Trim().ToLowerInvariant();
+        var trigger = triggerLimit == TriggerLimit.FiveHour
+            ? "fiveHour"
+            : "weekly";
 
         return string.Create(
             CultureInfo.InvariantCulture,
-            $"{limitId}|weekly|{window.NormalizedDurationMinutes}|{window.ResetsAt}");
+            $"{limitId}|{trigger}|{window.NormalizedDurationMinutes}|{window.ResetsAt}");
     }
 
     private sealed record BucketSelection(
@@ -303,4 +437,9 @@ public sealed class ResetDecisionEngine
     private sealed record WindowSelection(
         WindowReading? Reading,
         DecisionReason Reason);
+
+    private sealed record TriggerCandidate(
+        TriggerLimit Limit,
+        WindowSelection Window,
+        int ThresholdPercent);
 }

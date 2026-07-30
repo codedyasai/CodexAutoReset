@@ -71,7 +71,13 @@ public sealed class LiveResetCoordinatorTests
         var coordinator = CreateCoordinator(directory, client);
 
         var result = await coordinator.ExecuteAsync(
-            GuardSettings.Default,
+            GuardSettings.Default with
+            {
+                RemainingThresholdPercent = 7,
+                AutomationEnabled = false,
+                FiveHourRemainingThresholdPercent = 7,
+                FiveHourAutomationEnabled = false,
+            },
             CreateLimits(Now),
             Now,
             CancellationToken.None);
@@ -81,6 +87,126 @@ public sealed class LiveResetCoordinatorTests
         Assert.AreEqual(
             0,
             (await coordinator.ReadAttemptsAsync(CancellationToken.None)).Count);
+    }
+
+    [TestMethod]
+    public async Task DefaultBlankLimitsNeverTriggerAtZeroRemaining()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var client = new FakeAccountRateLimitClient();
+        var coordinator = CreateCoordinator(directory, client);
+
+        var result = await coordinator.ExecuteAsync(
+            GuardSettings.Default,
+            CreateLimits(
+                Now,
+                weeklyUsedPercent: 100,
+                fiveHourUsedPercent: 100),
+            Now,
+            CancellationToken.None);
+
+        Assert.IsNull(GuardSettings.Default.RemainingThresholdPercent);
+        Assert.IsFalse(GuardSettings.Default.AutomationEnabled);
+        Assert.IsNull(GuardSettings.Default.FiveHourRemainingThresholdPercent);
+        Assert.IsFalse(GuardSettings.Default.FiveHourAutomationEnabled);
+        Assert.AreEqual(LiveResetCycleKind.AutomationDisabled, result.Kind);
+        Assert.AreEqual(0, client.ConsumeRequests.Count);
+        Assert.AreEqual(
+            0,
+            (await coordinator.ReadAttemptsAsync(CancellationToken.None)).Count);
+    }
+
+    [TestMethod]
+    public async Task WeeklyFlagWithoutThresholdCannotEnableLiveAutomation()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var client = new FakeAccountRateLimitClient();
+        var coordinator = CreateCoordinator(directory, client);
+        var settings = GuardSettings.Default with
+        {
+            RemainingThresholdPercent = null,
+            AutomationEnabled = true,
+            FiveHourRemainingThresholdPercent = null,
+            FiveHourAutomationEnabled = false,
+        };
+
+        var result = await coordinator.ExecuteAsync(
+            settings,
+            CreateLimits(
+                Now,
+                weeklyUsedPercent: 100,
+                fiveHourUsedPercent: 100),
+            Now,
+            CancellationToken.None);
+
+        Assert.IsFalse(settings.AnyAutomationEnabled);
+        Assert.IsFalse(settings.IsAutomationEnabled(TriggerLimit.Weekly));
+        Assert.AreEqual(LiveResetCycleKind.AutomationDisabled, result.Kind);
+        Assert.AreEqual(0, client.ConsumeRequests.Count);
+        Assert.AreEqual(
+            0,
+            (await coordinator.ReadAttemptsAsync(CancellationToken.None)).Count);
+    }
+
+    [TestMethod]
+    public async Task FiveHourFlagWithoutThresholdCannotEnableLiveAutomation()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var client = new FakeAccountRateLimitClient();
+        var coordinator = CreateCoordinator(directory, client);
+        var settings = GuardSettings.Default with
+        {
+            RemainingThresholdPercent = 7,
+            AutomationEnabled = false,
+            FiveHourRemainingThresholdPercent = null,
+            FiveHourAutomationEnabled = true,
+        };
+
+        var result = await coordinator.ExecuteAsync(
+            settings,
+            CreateLimits(
+                Now,
+                weeklyUsedPercent: 20,
+                fiveHourUsedPercent: 100),
+            Now,
+            CancellationToken.None);
+
+        Assert.AreEqual(LiveResetCycleKind.AutomationDisabled, result.Kind);
+        Assert.AreEqual(0, client.ConsumeRequests.Count);
+        Assert.AreEqual(
+            0,
+            (await coordinator.ReadAttemptsAsync(CancellationToken.None)).Count);
+    }
+
+    [TestMethod]
+    public async Task WeeklyZeroThresholdConsumesAtExactZeroRemaining()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var client = SuccessfulClient();
+        var coordinator = CreateCoordinator(directory, client);
+        var settings = GuardSettings.Default with
+        {
+            RemainingThresholdPercent = 0,
+            AutomationEnabled = true,
+            FiveHourRemainingThresholdPercent = null,
+            FiveHourAutomationEnabled = false,
+        };
+
+        var result = await coordinator.ExecuteAsync(
+            settings,
+            CreateLimits(
+                Now,
+                weeklyUsedPercent: 100,
+                fiveHourUsedPercent: 100),
+            Now,
+            CancellationToken.None);
+
+        Assert.IsTrue(settings.AnyAutomationEnabled);
+        Assert.IsTrue(settings.IsAutomationEnabled(TriggerLimit.Weekly));
+        Assert.AreEqual(LiveResetCycleKind.Completed, result.Kind);
+        Assert.AreEqual(TriggerLimit.Weekly, result.Attempt!.TriggerLimit);
+        Assert.AreEqual(0, result.Attempt.ThresholdPercent);
+        Assert.AreEqual(1, client.ConsumeRequests.Count);
     }
 
     [TestMethod]
@@ -1045,7 +1171,366 @@ public sealed class LiveResetCoordinatorTests
     }
 
     [TestMethod]
-    public async Task LegacyFiveHourPendingAttemptBlocksWithoutMutationOrRetargeting()
+    public async Task NewFiveHourAttemptIsDurableWhenEnabled()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var fiveHourResetsAt = Now.AddHours(4).ToUnixTimeSeconds();
+        var credits = CreateCredits("five-hour-credit");
+        var preflight = CreateLimits(
+            Now.AddSeconds(1),
+            observedAt: Now.AddSeconds(1),
+            weeklyUsedPercent: 20,
+            credits: credits,
+            fiveHourUsedPercent: 95,
+            fiveHourResetsAt: fiveHourResetsAt);
+        var client = new FakeAccountRateLimitClient
+        {
+            ConsumeHandler = (_, _) =>
+                Task.FromException<ConsumeResetCreditResult>(
+                    new RetryableException()),
+            ReadHandler = _ => Task.FromResult(preflight),
+        };
+        var classifier = new FixedFailureClassifier(
+            LiveResetFailureDisposition.Retryable);
+        var coordinator = CreateCoordinator(
+            directory,
+            client,
+            classifier: classifier);
+
+        await Assert.ThrowsExceptionAsync<RetryableException>(() =>
+            coordinator.ExecuteAsync(
+                FiveHourLiveSettings(),
+                CreateLimits(
+                    Now,
+                    weeklyUsedPercent: 20,
+                    credits: credits,
+                    fiveHourUsedPercent: 95,
+                    fiveHourResetsAt: fiveHourResetsAt),
+                Now,
+                CancellationToken.None));
+
+        var pending = AssertSingleAttempt(await coordinator.ReadAttemptsAsync(
+            CancellationToken.None));
+        Assert.AreEqual(TriggerLimit.FiveHour, pending.TriggerLimit);
+        Assert.AreEqual(LiveAttemptPhase.Pending, pending.Phase);
+        Assert.AreEqual(1, pending.DispatchCount);
+        Assert.AreEqual(300, pending.NormalizedDurationMinutes);
+        Assert.AreEqual(fiveHourResetsAt, pending.ResetsAt);
+        Assert.AreEqual(
+            $"codex|fiveHour|300|{fiveHourResetsAt}",
+            pending.IntervalKey);
+
+        var restarted = CreateCoordinator(
+            directory,
+            client,
+            classifier: classifier);
+        var afterRestart = AssertSingleAttempt(await restarted.ReadAttemptsAsync(
+            CancellationToken.None));
+        Assert.AreEqual(pending, afterRestart);
+    }
+
+    [TestMethod]
+    public async Task FiveHourEnabledFirstDispatchPreflightsBeforeConsume()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var events = new List<string>();
+        var readCount = 0;
+        var weeklyResetsAt = Now.AddDays(5).ToUnixTimeSeconds();
+        var fiveHourResetsAt = Now.AddHours(4).ToUnixTimeSeconds();
+        var credits = CreateCredits("preflight-credit");
+        var client = new FakeAccountRateLimitClient
+        {
+            ConsumeHandler = (_, _) =>
+            {
+                events.Add("consume");
+                return Task.FromResult(new ConsumeResetCreditResult(
+                    ConsumeResetCreditOutcome.Reset));
+            },
+            ReadHandler = _ =>
+            {
+                readCount++;
+                events.Add("read");
+                return Task.FromResult(readCount == 1
+                    ? CreateLimits(
+                        Now.AddSeconds(1),
+                        observedAt: Now.AddSeconds(1),
+                        weeklyResetsAt: weeklyResetsAt,
+                        weeklyUsedPercent: 95,
+                        credits: credits,
+                        fiveHourUsedPercent: 20,
+                        fiveHourResetsAt: fiveHourResetsAt)
+                    : CreateLimits(
+                        Now.AddSeconds(2),
+                        observedAt: Now.AddSeconds(2),
+                        weeklyResetsAt: weeklyResetsAt,
+                        weeklyUsedPercent: 0,
+                        credits: credits,
+                        fiveHourUsedPercent: 0,
+                        fiveHourResetsAt: fiveHourResetsAt));
+            },
+        };
+        var coordinator = CreateCoordinator(directory, client);
+
+        var result = await coordinator.ExecuteAsync(
+            DualLiveSettings(),
+            CreateLimits(
+                Now,
+                weeklyResetsAt: weeklyResetsAt,
+                weeklyUsedPercent: 95,
+                credits: credits,
+                fiveHourUsedPercent: 20,
+                fiveHourResetsAt: fiveHourResetsAt),
+            Now,
+            CancellationToken.None);
+
+        Assert.AreEqual(LiveResetCycleKind.Completed, result.Kind);
+        Assert.AreEqual(TriggerLimit.Weekly, result.Attempt!.TriggerLimit);
+        CollectionAssert.AreEqual(
+            new[] { "read", "consume", "read" },
+            events);
+        Assert.AreEqual(1, client.ConsumeRequests.Count);
+    }
+
+    [DataTestMethod]
+    [DataRow("window")]
+    [DataRow("credit")]
+    public async Task PreflightWindowOrCreditChangeBlocksBeforeConsume(
+        string changedContext)
+    {
+        using var directory = TemporaryDirectory.Create();
+        var readCount = 0;
+        var fiveHourResetsAt = Now.AddHours(4).ToUnixTimeSeconds();
+        var initialCredits = CreateCredits("initial-credit");
+        var preflightCredits = changedContext == "credit"
+            ? CreateCredits("different-credit")
+            : initialCredits;
+        var preflightResetsAt = changedContext == "window"
+            ? fiveHourResetsAt + 60
+            : fiveHourResetsAt;
+        var client = new FakeAccountRateLimitClient
+        {
+            ReadHandler = _ =>
+            {
+                readCount++;
+                return Task.FromResult(CreateLimits(
+                    Now.AddSeconds(1),
+                    observedAt: Now.AddSeconds(1),
+                    weeklyUsedPercent: 20,
+                    credits: preflightCredits,
+                    fiveHourUsedPercent: 95,
+                    fiveHourResetsAt: preflightResetsAt));
+            },
+        };
+        var coordinator = CreateCoordinator(directory, client);
+        var settings = FiveHourLiveSettings();
+        var initial = CreateLimits(
+            Now,
+            weeklyUsedPercent: 20,
+            credits: initialCredits,
+            fiveHourUsedPercent: 95,
+            fiveHourResetsAt: fiveHourResetsAt);
+
+        var result = await coordinator.ExecuteAsync(
+            settings,
+            initial,
+            Now,
+            CancellationToken.None);
+
+        Assert.AreEqual(LiveResetCycleKind.Blocked, result.Kind);
+        Assert.IsFalse(result.ConsumeAttempted);
+        Assert.IsNotNull(result.RefreshedRateLimits);
+        Assert.AreEqual(0, client.ConsumeRequests.Count);
+        Assert.AreEqual(1, readCount);
+        Assert.AreEqual(LiveAttemptPhase.NeedsReview, result.Attempt!.Phase);
+        Assert.AreEqual(
+            LiveAttemptBlockReason.ContextChanged,
+            result.Attempt.BlockReason);
+        Assert.AreEqual(0, result.Attempt.DispatchCount);
+
+        var restarted = CreateCoordinator(directory, client);
+        var stillBlocked = await restarted.ExecuteAsync(
+            settings,
+            initial with { ObservedAt = Now.AddMinutes(1) },
+            Now.AddMinutes(1),
+            CancellationToken.None);
+        Assert.AreEqual(LiveResetCycleKind.Blocked, stillBlocked.Kind);
+        Assert.AreEqual(
+            LiveAttemptBlockReason.ContextChanged,
+            stillBlocked.Attempt!.BlockReason);
+        Assert.AreEqual(0, client.ConsumeRequests.Count);
+        Assert.AreEqual(1, readCount);
+    }
+
+    [TestMethod]
+    public async Task BothLowPrioritizesWeeklyAndConsumesExactlyOnce()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var readCount = 0;
+        var weeklyResetsAt = Now.AddDays(5).ToUnixTimeSeconds();
+        var fiveHourResetsAt = Now.AddHours(4).ToUnixTimeSeconds();
+        var credits = CreateCredits("first-credit", "second-credit");
+        var client = new FakeAccountRateLimitClient
+        {
+            ConsumeHandler = (_, _) => Task.FromResult(
+                new ConsumeResetCreditResult(ConsumeResetCreditOutcome.Reset)),
+            ReadHandler = _ =>
+            {
+                readCount++;
+                return Task.FromResult(readCount == 1
+                    ? CreateLimits(
+                        Now.AddSeconds(1),
+                        observedAt: Now.AddSeconds(1),
+                        weeklyResetsAt: weeklyResetsAt,
+                        weeklyUsedPercent: 95,
+                        credits: credits,
+                        fiveHourUsedPercent: 95,
+                        fiveHourResetsAt: fiveHourResetsAt)
+                    : CreateLimits(
+                        Now.AddSeconds(2),
+                        observedAt: Now.AddSeconds(2),
+                        weeklyResetsAt: weeklyResetsAt,
+                        weeklyUsedPercent: 0,
+                        credits: credits,
+                        fiveHourUsedPercent: 0,
+                        fiveHourResetsAt: fiveHourResetsAt));
+            },
+        };
+        var coordinator = CreateCoordinator(directory, client);
+        var settings = DualLiveSettings();
+
+        var completed = await coordinator.ExecuteAsync(
+            settings,
+            CreateLimits(
+                Now,
+                weeklyResetsAt: weeklyResetsAt,
+                weeklyUsedPercent: 95,
+                credits: credits,
+                fiveHourUsedPercent: 95,
+                fiveHourResetsAt: fiveHourResetsAt),
+            Now,
+            CancellationToken.None);
+        var suppressed = await coordinator.ExecuteAsync(
+            settings,
+            CreateLimits(
+                Now.AddMinutes(1),
+                observedAt: Now.AddMinutes(1),
+                weeklyResetsAt: weeklyResetsAt,
+                weeklyUsedPercent: 95,
+                credits: CreateCredits("second-credit"),
+                fiveHourUsedPercent: 95,
+                fiveHourResetsAt: fiveHourResetsAt),
+            Now.AddMinutes(1),
+            CancellationToken.None);
+
+        Assert.AreEqual(LiveResetCycleKind.Completed, completed.Kind);
+        Assert.AreEqual(
+            TriggerLimit.Weekly,
+            completed.Evaluation.Decision.SelectedLimit);
+        Assert.AreEqual(TriggerLimit.Weekly, completed.Attempt!.TriggerLimit);
+        Assert.AreEqual(
+            LiveResetCycleKind.DuplicateSuppressed,
+            suppressed.Kind);
+        Assert.AreEqual(1, client.ConsumeRequests.Count);
+        Assert.AreEqual("first-credit", client.ConsumeRequests[0].CreditId);
+        Assert.AreEqual(
+            1,
+            (await coordinator.ReadAttemptsAsync(CancellationToken.None)).Count);
+    }
+
+    [TestMethod]
+    public async Task SuccessfulResetWaitsForEveryEnabledPresentWindowToRecover()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var weeklyResetsAt = Now.AddDays(5).ToUnixTimeSeconds();
+        var fiveHourResetsAt = Now.AddHours(4).ToUnixTimeSeconds();
+        var initialCredits = CreateCredits("first-credit", "second-credit");
+        var remainingCredit = CreateCredits("second-credit");
+        var reads = new Queue<AccountRateLimits>(
+        [
+            CreateLimits(
+                Now.AddSeconds(1),
+                observedAt: Now.AddSeconds(1),
+                weeklyResetsAt: weeklyResetsAt,
+                weeklyUsedPercent: 95,
+                credits: initialCredits,
+                fiveHourUsedPercent: 95,
+                fiveHourResetsAt: fiveHourResetsAt),
+            CreateLimits(
+                Now.AddSeconds(2),
+                observedAt: Now.AddSeconds(2),
+                weeklyResetsAt: weeklyResetsAt,
+                weeklyUsedPercent: 0,
+                credits: remainingCredit,
+                fiveHourUsedPercent: 95,
+                fiveHourResetsAt: fiveHourResetsAt),
+        ]);
+        var client = new FakeAccountRateLimitClient
+        {
+            ConsumeHandler = (_, _) => Task.FromResult(
+                new ConsumeResetCreditResult(ConsumeResetCreditOutcome.Reset)),
+            ReadHandler = _ => Task.FromResult(reads.Dequeue()),
+        };
+        var coordinator = CreateCoordinator(directory, client);
+        var settings = DualLiveSettings();
+
+        var completed = await coordinator.ExecuteAsync(
+            settings,
+            CreateLimits(
+                Now,
+                weeklyResetsAt: weeklyResetsAt,
+                weeklyUsedPercent: 95,
+                credits: initialCredits,
+                fiveHourUsedPercent: 95,
+                fiveHourResetsAt: fiveHourResetsAt),
+            Now,
+            CancellationToken.None);
+        var partialRecovery = await coordinator.ExecuteAsync(
+            settings,
+            CreateLimits(
+                Now.AddMinutes(1),
+                observedAt: Now.AddMinutes(1),
+                weeklyResetsAt: weeklyResetsAt,
+                weeklyUsedPercent: 0,
+                credits: remainingCredit,
+                fiveHourUsedPercent: 95,
+                fiveHourResetsAt: fiveHourResetsAt),
+            Now.AddMinutes(1),
+            CancellationToken.None);
+        var pendingAfterPartial = AssertSingleAttempt(
+            await coordinator.ReadAttemptsAsync(CancellationToken.None));
+        var fullRecovery = await coordinator.ExecuteAsync(
+            settings,
+            CreateLimits(
+                Now.AddMinutes(2),
+                observedAt: Now.AddMinutes(2),
+                weeklyResetsAt: weeklyResetsAt,
+                weeklyUsedPercent: 0,
+                credits: remainingCredit,
+                fiveHourUsedPercent: 0,
+                fiveHourResetsAt: fiveHourResetsAt),
+            Now.AddMinutes(2),
+            CancellationToken.None);
+        var recovered = AssertSingleAttempt(await coordinator.ReadAttemptsAsync(
+            CancellationToken.None));
+
+        Assert.AreEqual(LiveResetCycleKind.Completed, completed.Kind);
+        Assert.IsTrue(completed.RequiresRefresh);
+        Assert.AreEqual(
+            LiveResetCycleKind.DuplicateSuppressed,
+            partialRecovery.Kind);
+        Assert.AreEqual(
+            TriggerLimit.FiveHour,
+            partialRecovery.Evaluation.Decision.SelectedLimit);
+        Assert.IsTrue(pendingAfterPartial.RefreshRequired);
+        Assert.AreEqual(LiveResetCycleKind.NoAction, fullRecovery.Kind);
+        Assert.IsFalse(recovered.RefreshRequired);
+        Assert.AreEqual(1, client.ConsumeRequests.Count);
+        Assert.AreEqual("first-credit", client.ConsumeRequests[0].CreditId);
+        Assert.AreEqual(0, reads.Count);
+    }
+
+    [TestMethod]
+    public async Task LegacyFiveHourPendingWithSettingDisabledBecomesContextChanged()
     {
         using var directory = TemporaryDirectory.Create();
         var client = SuccessfulClient();
@@ -1080,10 +1565,27 @@ public sealed class LiveResetCoordinatorTests
 
         Assert.AreEqual(LiveResetCycleKind.Blocked, result.Kind);
         Assert.AreEqual(
-            LiveAttemptBlockReason.LegacyTriggerUnsupported,
+            LiveAttemptBlockReason.ContextChanged,
             result.Attempt!.BlockReason);
+        Assert.AreEqual(LiveAttemptPhase.NeedsReview, result.Attempt.Phase);
+        Assert.AreEqual(TriggerLimit.FiveHour, result.Attempt.TriggerLimit);
+        Assert.AreEqual(1, result.Attempt.DispatchCount);
         Assert.AreEqual(1, client.ConsumeRequests.Count);
-        Assert.AreEqual(legacyState, await File.ReadAllTextAsync(path));
+        Assert.AreNotEqual(legacyState, await File.ReadAllTextAsync(path));
+
+        var restarted = CreateCoordinator(directory, client);
+        var stillBlocked = await restarted.ExecuteAsync(
+            LiveSettings(),
+            CreateLimits(
+                Now.AddMinutes(1),
+                observedAt: Now.AddMinutes(1)),
+            Now.AddMinutes(1),
+            CancellationToken.None);
+        Assert.AreEqual(LiveResetCycleKind.Blocked, stillBlocked.Kind);
+        Assert.AreEqual(
+            LiveAttemptBlockReason.ContextChanged,
+            stillBlocked.Attempt!.BlockReason);
+        Assert.AreEqual(1, client.ConsumeRequests.Count);
     }
 
     [TestMethod]
@@ -1226,7 +1728,24 @@ public sealed class LiveResetCoordinatorTests
 
     private static GuardSettings LiveSettings() => GuardSettings.Default with
     {
+        RemainingThresholdPercent = 7,
         AutomationEnabled = true,
+        FiveHourRemainingThresholdPercent = null,
+        FiveHourAutomationEnabled = false,
+    };
+
+    private static GuardSettings FiveHourLiveSettings() => GuardSettings.Default with
+    {
+        RemainingThresholdPercent = 7,
+        AutomationEnabled = false,
+        FiveHourRemainingThresholdPercent = 7,
+        FiveHourAutomationEnabled = true,
+    };
+
+    private static GuardSettings DualLiveSettings() => LiveSettings() with
+    {
+        FiveHourRemainingThresholdPercent = 7,
+        FiveHourAutomationEnabled = true,
     };
 
     private static IReadOnlyList<ResetCredit> CreateCredits(params string[] ids) =>
@@ -1244,15 +1763,17 @@ public sealed class LiveResetCoordinatorTests
         DateTimeOffset? observedAt = null,
         long? weeklyResetsAt = null,
         double weeklyUsedPercent = 93,
-        IReadOnlyList<ResetCredit>? credits = null)
+        IReadOnlyList<ResetCredit>? credits = null,
+        double fiveHourUsedPercent = 20,
+        long? fiveHourResetsAt = null)
     {
         var snapshot = new RateLimitSnapshot(
             "codex",
             null,
             new RateLimitWindow(
-                20,
+                fiveHourUsedPercent,
                 300,
-                now.AddHours(4).ToUnixTimeSeconds()),
+                fiveHourResetsAt ?? now.AddHours(4).ToUnixTimeSeconds()),
             new RateLimitWindow(
                 weeklyUsedPercent,
                 10_080,

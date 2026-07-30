@@ -13,6 +13,7 @@
         UseLayoutRounding="True"
         SnapsToDevicePixels="True"
         TextOptions.TextFormattingMode="Display"
+        PreviewMouseDown="OnWindowPreviewMouseDown"
         Closing="OnClosing">
     <Grid Background="{StaticResource AppBackgroundBrush}">
         <Grid.RowDefinitions>
@@ -41,7 +42,7 @@
                             Margin="15,0,0,0"
                             VerticalAlignment="Center">
                     <TextBlock Style="{StaticResource CaptionTextStyle}"
-                               Text="주간 사용량과 초기화권을 한곳에서 관리합니다." />
+                               Text="주간·5시간 사용량과 초기화권을 한곳에서 관리합니다." />
                 </StackPanel>
             </Grid>
         </Border>
@@ -101,7 +102,7 @@
                                         Content="Codex.exe 직접 찾기"
                                         IsEnabled="{Binding CanEditCodexConnection}"
                                         AutomationProperties.Name="Codex 실행 파일 직접 선택"
-                                        AutomationProperties.HelpText="선택하면 연결 경로만 바로 저장됩니다. 초기화권 자동 사용 설정은 바뀌지 않으며, 사용량은 설정된 주기에 다시 확인합니다."
+                                        AutomationProperties.HelpText="선택하면 연결 경로만 바로 저장됩니다. 초기화권 자동 사용 설정은 바뀌지 않으며, 사용량은 다음 1분 확인에서 반영됩니다."
                                         Click="OnSelectCodexExecutableClick" />
                             </Grid>
                         </Border>
@@ -133,16 +134,9 @@
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <StackPanel>
-                                <TextBlock FontSize="14"
-                                           FontWeight="SemiBold"
-                                           Foreground="{StaticResource SecondaryTextBrush}"
-                                           Text="이번 주 남은 사용량" />
-                                <TextBlock Margin="0,5,0,0"
-                                           FontSize="42"
-                                           FontWeight="SemiBold"
-                                           Text="{Binding WeeklyRemainingText}" />
-                            </StackPanel>
+                            <TextBlock VerticalAlignment="Top"
+                                       Style="{StaticResource SectionHeadingTextStyle}"
+                                       Text="사용량" />
                             <StackPanel Grid.Column="1"
                                         Margin="12,0,0,0"
                                         HorizontalAlignment="Center">
@@ -155,6 +149,7 @@
                                         ToolTip="새로고침"
                                         IsEnabled="{Binding CanRefresh}"
                                         AutomationProperties.Name="{Binding RefreshAutomationName}"
+                                        AutomationProperties.HelpText="주간 및 5시간 사용량을 다시 확인합니다."
                                         Click="OnRefreshClick">
                                     <TextBlock FontFamily="Segoe MDL2 Assets"
                                                FontSize="18"
@@ -206,14 +201,56 @@
                             </StackPanel>
                         </Grid>
 
-                        <ProgressBar Margin="0,18,0,10"
-                                     Minimum="0"
-                                     Maximum="100"
-                                     Value="{Binding WeeklyRemainingPercent, Mode=OneWay}"
-                                     AutomationProperties.Name="주간 남은 사용량 백분율"
-                                     AutomationProperties.HelpText="0에서 100 사이의 주간 남은 사용량입니다." />
-                        <TextBlock Style="{StaticResource CaptionTextStyle}"
-                                   Text="{Binding WeeklyResetStatus}" />
+                        <StackPanel x:Name="WeeklyUsageSection"
+                                    Margin="0,16,0,0">
+                            <TextBlock FontSize="14"
+                                       FontWeight="SemiBold"
+                                       Foreground="{StaticResource SecondaryTextBrush}"
+                                       Text="주간 한도 잔여량" />
+                            <TextBlock Margin="0,5,0,0"
+                                       FontSize="42"
+                                       FontWeight="SemiBold"
+                                       Text="{Binding WeeklyRemainingText}" />
+                            <ProgressBar Margin="0,14,0,10"
+                                         Minimum="0"
+                                         Maximum="100"
+                                         Value="{Binding WeeklyRemainingPercent, Mode=OneWay}"
+                                         AutomationProperties.Name="주간 한도 잔여량 백분율"
+                                         AutomationProperties.HelpText="0에서 100 사이의 주간 한도 잔여량입니다." />
+                            <TextBlock Style="{StaticResource CaptionTextStyle}"
+                                       Text="{Binding WeeklyResetStatus}"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+
+                        <Separator Margin="0,20"
+                                   Background="{StaticResource BorderBrush}" />
+
+                        <Border x:Name="FiveHourUsageCard"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                Padding="0">
+                            <StackPanel>
+                                <TextBlock FontSize="14"
+                                           FontWeight="SemiBold"
+                                           Foreground="{StaticResource SecondaryTextBrush}"
+                                           Text="5시간 한도 잔여량" />
+                                <TextBlock Margin="0,5,0,0"
+                                           FontSize="42"
+                                           FontWeight="SemiBold"
+                                           Text="{Binding FiveHourRemainingText}"
+                                           TextWrapping="Wrap" />
+                                <ProgressBar Margin="0,14,0,10"
+                                             Minimum="0"
+                                             Maximum="100"
+                                             Value="{Binding FiveHourRemainingPercent, Mode=OneWay}"
+                                             AutomationProperties.Name="5시간 한도 잔여량 백분율"
+                                             AutomationProperties.HelpText="0에서 100 사이의 5시간 한도 잔여량입니다." />
+                                <TextBlock Style="{StaticResource CaptionTextStyle}"
+                                           Text="{Binding FiveHourResetStatus}"
+                                           TextWrapping="Wrap"
+                                           AutomationProperties.LiveSetting="Polite" />
+                            </StackPanel>
+                        </Border>
 
                         <Border x:Name="OverallStatusPanel"
                                 Margin="0,18,0,0"
@@ -306,7 +343,7 @@
                         <Separator Margin="0,20"
                                    Background="{StaticResource BorderBrush}" />
 
-                        <Grid>
+                        <Grid x:Name="UsageSummaryGrid">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="1" />
@@ -318,7 +355,7 @@
                                 <TextBlock Style="{StaticResource CaptionTextStyle}"
                                            Text="사용 가능한 초기화권" />
                                 <TextBlock Margin="0,7,0,0"
-                                           FontSize="25"
+                                           FontSize="16"
                                            FontWeight="SemiBold"
                                            Text="{Binding CreditStatus}" />
                             </StackPanel>
@@ -329,7 +366,7 @@
                             <StackPanel Grid.Column="2"
                                         Margin="20,0,0,0">
                                 <TextBlock Style="{StaticResource CaptionTextStyle}"
-                                           Text="마지막 정상 확인" />
+                                           Text="최근 사용량 확인" />
                                 <TextBlock Margin="0,7,0,0"
                                            FontSize="16"
                                            FontWeight="SemiBold"
@@ -370,22 +407,29 @@
                                    Background="{StaticResource BorderBrush}" />
 
                         <Grid x:Name="SettingsSplitGrid">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="1" />
-                                <ColumnDefinition Width="24" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
 
-                            <StackPanel x:Name="SettingsAutomationPanel"
-                                        Grid.Column="0">
-                                <Grid>
+                            <Grid x:Name="SettingsTopOptionsGrid"
+                                  Grid.Row="0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="41" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+
+                                <Grid x:Name="SettingsAutomationPanel"
+                                      Grid.Column="0"
+                                      Margin="0,0,20,0">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Margin="0,0,12,0">
-                                        <TextBlock FontSize="16"
+                                        <TextBlock FontSize="15"
                                                    FontWeight="SemiBold"
                                                    TextWrapping="Wrap"
                                                    Text="Windows 로그인 시 자동 실행" />
@@ -403,141 +447,167 @@
                                               Click="OnStartWithWindowsClick" />
                                 </Grid>
 
-                                <Separator Margin="0,20"
-                                           Background="{StaticResource BorderBrush}" />
+                                <Border Grid.Column="1"
+                                        Width="1"
+                                        HorizontalAlignment="Center"
+                                        Background="{StaticResource BorderBrush}" />
 
-                                <Grid>
+                                <Grid x:Name="SettingsNotificationPanel"
+                                      Grid.Column="2"
+                                      Margin="20,0,0,0">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Margin="0,0,12,0">
-                                        <TextBlock FontSize="16"
-                                                   FontWeight="SemiBold"
-                                                   TextWrapping="Wrap"
-                                                   Text="초기화권 자동 사용" />
-                                        <TextBlock Margin="0,4,0,0"
-                                                   Style="{StaticResource CaptionTextStyle}"
-                                                   Text="잔여량이 임계값 이하이면 초기화권을 자동으로 사용합니다." />
-                                    </StackPanel>
-                                    <CheckBox x:Name="AutomationToggle"
-                                              Grid.Column="1"
-                                              VerticalAlignment="Center"
-                                              IsChecked="{Binding AutomationEnabled}"
-                                              Style="{StaticResource ToggleSwitchStyle}"
-                                              KeyboardNavigation.TabIndex="1"
-                                              AutomationProperties.Name="초기화권 자동 사용"
-                                              AutomationProperties.HelpText="켜면 임계값 도달 시 초기화권을 사용할 수 있습니다."
-                                              Click="OnAutomationToggleClick" />
-                                </Grid>
-
-                                <Border Margin="0,16,0,0"
-                                        Padding="12,11"
-                                        Background="{StaticResource SurfaceBrush}"
-                                        BorderBrush="{StaticResource BorderBrush}"
-                                        BorderThickness="1"
-                                        CornerRadius="9">
-                                    <Border.Style>
-                                        <Style TargetType="Border">
-                                            <Setter Property="Visibility" Value="Collapsed" />
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding AutomationEnabled}"
-                                                             Value="True">
-                                                    <Setter Property="Visibility" Value="Visible" />
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Border.Style>
-                                    <StackPanel>
-                                        <TextBlock FontWeight="SemiBold"
-                                                   Text="초기화권이 실제로 사용될 수 있습니다." />
-                                        <TextBlock Margin="0,5,0,0"
-                                                   Style="{StaticResource CaptionTextStyle}"
-                                                   Text="주간 잔여량이 임계값 이하이면 초기화권 1개가 사용될 수 있습니다." />
-                                    </StackPanel>
-                                </Border>
-
-                                <Separator Margin="0,20"
-                                           Background="{StaticResource BorderBrush}" />
-
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel Margin="0,0,12,0">
-                                        <TextBlock FontSize="16"
+                                        <TextBlock FontSize="15"
                                                    FontWeight="SemiBold"
                                                    TextWrapping="Wrap"
                                                    Text="사용량 초기화 알림" />
                                         <TextBlock Margin="0,4,0,0"
                                                    Style="{StaticResource CaptionTextStyle}"
-                                                   Text="정기·이른 사용량 초기화와 앱의 초기화권 자동 사용을 감지하면 알려줍니다." />
+                                                   Text="사용량 회복을 감지하면 알려줍니다."
+                                                   TextWrapping="Wrap" />
                                     </StackPanel>
                                     <CheckBox x:Name="UsageResetNotificationToggle"
                                               Grid.Column="1"
                                               VerticalAlignment="Center"
                                               IsChecked="{Binding NotifyOnUsageReset}"
                                               Style="{StaticResource ToggleSwitchStyle}"
-                                              KeyboardNavigation.TabIndex="2"
+                                              KeyboardNavigation.TabIndex="1"
                                               AutomationProperties.Name="사용량 초기화 알림"
                                               Click="OnUsageResetNotificationClick" />
                                 </Grid>
-                            </StackPanel>
+                            </Grid>
 
-                            <Border Grid.Column="1"
-                                    Background="{StaticResource BorderBrush}" />
+                            <Separator Grid.Row="1"
+                                       Margin="0,20"
+                                       Background="{StaticResource BorderBrush}" />
 
-                            <StackPanel x:Name="SettingsNumericPanel"
-                                        Grid.Column="3">
-                                <Label Padding="0"
-                                       FontWeight="SemiBold"
-                                       Target="{Binding ElementName=ThresholdInput}"
-                                       Content="잔여량 임계값" />
-                                <TextBlock Margin="0,3,0,8"
+                            <StackPanel Grid.Row="2">
+                                <TextBlock FontSize="16"
+                                           FontWeight="SemiBold"
+                                           Text="초기화권 자동 사용" />
+                                <TextBlock Margin="0,4,0,0"
                                            Style="{StaticResource CaptionTextStyle}"
-                                           Text="주간 잔여량이 이 값 이하일 때 초기화 조건을 확인합니다. (1~99%)" />
-                                <DockPanel LastChildFill="False">
-                                    <TextBox x:Name="ThresholdInput"
-                                             Width="116"
-                                             MaxLength="3"
-                                             Text="{Binding ThresholdText, UpdateSourceTrigger=PropertyChanged}"
-                                             KeyboardNavigation.TabIndex="3"
-                                             AutomationProperties.Name="주간 잔여량 임계값"
-                                             TextChanged="OnThresholdTextChanged"
-                                             LostKeyboardFocus="OnNumericInputLostKeyboardFocus"
-                                             KeyDown="OnNumericInputKeyDown" />
-                                    <TextBlock Margin="10,0,0,0"
+                                           Text="한도별 임계값과 자동 사용 여부를 설정합니다."
+                                           TextWrapping="Wrap" />
+
+                                <Grid x:Name="SettingsNumericPanel"
+                                      Margin="0,14,0,0">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+
+                                    <Grid x:Name="WeeklyAutomationRow"
+                                          Grid.Row="0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="118" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="80" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <TextBlock Grid.Column="0"
+                                                   VerticalAlignment="Center"
+                                                   FontSize="15"
+                                                   FontWeight="SemiBold"
+                                                   Text="주간 한도" />
+                                        <Label Grid.Column="1"
+                                               Margin="0,0,10,0"
+                                               Padding="0"
                                                VerticalAlignment="Center"
                                                FontWeight="SemiBold"
-                                               Text="%" />
-                                </DockPanel>
+                                               Target="{Binding ElementName=WeeklyThresholdInput}"
+                                               Content="잔여량 임계값 (0~99)" />
+                                        <TextBox x:Name="WeeklyThresholdInput"
+                                                 Grid.Column="2"
+                                                 Width="80"
+                                                 MaxLength="3"
+                                                 Text="{Binding ThresholdText, UpdateSourceTrigger=PropertyChanged}"
+                                                 KeyboardNavigation.TabIndex="2"
+                                                 AutomationProperties.Name="주간 잔여량 임계값"
+                                                 AutomationProperties.HelpText="공란 또는 0에서 99 사이 숫자를 입력합니다."
+                                                 TextChanged="OnWeeklyThresholdTextChanged"
+                                                 LostKeyboardFocus="OnNumericInputLostKeyboardFocus"
+                                                 KeyDown="OnNumericInputKeyDown" />
+                                        <TextBlock Grid.Column="3"
+                                                   Margin="8,0,0,0"
+                                                   VerticalAlignment="Center"
+                                                   FontWeight="SemiBold"
+                                                   Text="%" />
+                                        <CheckBox x:Name="WeeklyAutomationToggle"
+                                                  Grid.Column="5"
+                                                  Margin="14,0,0,0"
+                                                  VerticalAlignment="Center"
+                                                  IsChecked="{Binding AutomationEnabled}"
+                                                  Style="{StaticResource ToggleSwitchStyle}"
+                                                  KeyboardNavigation.TabIndex="3"
+                                                  AutomationProperties.Name="주간 한도 자동 사용 조건"
+                                                  AutomationProperties.HelpText="켜면 주간 잔여량이 임계값 이하일 때 초기화권을 사용할 수 있습니다."
+                                                  Click="OnWeeklyAutomationToggleClick" />
+                                    </Grid>
 
-                                <Separator Margin="0,20"
-                                           Background="{StaticResource BorderBrush}" />
+                                    <Separator Grid.Row="1"
+                                               Margin="0,14"
+                                               Background="{StaticResource BorderBrush}" />
 
-                                <Label Padding="0"
-                                       FontWeight="SemiBold"
-                                       Target="{Binding ElementName=PollIntervalInput}"
-                                       Content="확인 주기" />
-                                <TextBlock Margin="0,3,0,8"
-                                           Style="{StaticResource CaptionTextStyle}"
-                                           Text="사용량을 다시 확인할 간격입니다. 확인 자체는 모델 토큰을 사용하지 않습니다. (1~60분)" />
-                                <DockPanel LastChildFill="False">
-                                    <TextBox x:Name="PollIntervalInput"
-                                             Width="116"
-                                             MaxLength="2"
-                                             Text="{Binding PollIntervalText, UpdateSourceTrigger=PropertyChanged}"
-                                             KeyboardNavigation.TabIndex="4"
-                                             AutomationProperties.Name="사용량 확인 주기"
-                                             TextChanged="OnPollIntervalTextChanged"
-                                             LostKeyboardFocus="OnNumericInputLostKeyboardFocus"
-                                             KeyDown="OnNumericInputKeyDown" />
-                                    <TextBlock Margin="10,0,0,0"
+                                    <Grid x:Name="FiveHourAutomationRow"
+                                          Grid.Row="2">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="118" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="80" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <TextBlock Grid.Column="0"
+                                                   VerticalAlignment="Center"
+                                                   FontSize="15"
+                                                   FontWeight="SemiBold"
+                                                   Text="5시간 한도" />
+                                        <Label Grid.Column="1"
+                                               Margin="0,0,10,0"
+                                               Padding="0"
                                                VerticalAlignment="Center"
                                                FontWeight="SemiBold"
-                                               Text="분" />
-                                </DockPanel>
+                                               Target="{Binding ElementName=FiveHourThresholdInput}"
+                                               Content="잔여량 임계값 (0~99)" />
+                                        <TextBox x:Name="FiveHourThresholdInput"
+                                                 Grid.Column="2"
+                                                 Width="80"
+                                                 MaxLength="3"
+                                                 Text="{Binding FiveHourThresholdText, UpdateSourceTrigger=PropertyChanged}"
+                                                 KeyboardNavigation.TabIndex="4"
+                                                 AutomationProperties.Name="5시간 잔여량 임계값"
+                                                 AutomationProperties.HelpText="공란 또는 0에서 99 사이 숫자를 입력합니다."
+                                                 TextChanged="OnFiveHourThresholdTextChanged"
+                                                 LostKeyboardFocus="OnNumericInputLostKeyboardFocus"
+                                                 KeyDown="OnNumericInputKeyDown" />
+                                        <TextBlock Grid.Column="3"
+                                                   Margin="8,0,0,0"
+                                                   VerticalAlignment="Center"
+                                                   FontWeight="SemiBold"
+                                                   Text="%" />
+                                        <CheckBox x:Name="FiveHourAutomationToggle"
+                                                  Grid.Column="5"
+                                                  Margin="14,0,0,0"
+                                                  VerticalAlignment="Center"
+                                                  IsChecked="{Binding FiveHourAutomationEnabled}"
+                                                  Style="{StaticResource ToggleSwitchStyle}"
+                                                  KeyboardNavigation.TabIndex="5"
+                                                  AutomationProperties.Name="5시간 한도 자동 사용 조건"
+                                                  AutomationProperties.HelpText="5시간 한도가 제공되는 경우에만 작동합니다."
+                                                  Click="OnFiveHourAutomationToggleClick" />
+                                    </Grid>
+                                </Grid>
+
                             </StackPanel>
                         </Grid>
                     </StackPanel>

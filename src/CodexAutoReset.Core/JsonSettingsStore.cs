@@ -109,7 +109,7 @@ public sealed class JsonSettingsStore
             directory,
             $".{System.IO.Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
 
-        var document = SettingsDocumentV4.FromSettings(settings);
+        var document = SettingsDocumentV6.FromSettings(settings);
 
         try
         {
@@ -165,8 +165,16 @@ public sealed class JsonSettingsStore
             throw new SettingsException("threshold_out_of_range");
         }
 
-        if (settings.PollIntervalMinutes is < GuardSettings.MinimumPollIntervalMinutes
-            or > GuardSettings.MaximumPollIntervalMinutes)
+        if (settings.FiveHourRemainingThresholdPercent
+            is < GuardSettings.MinimumThreshold
+                or > GuardSettings.MaximumThreshold)
+        {
+            throw new SettingsException("five_hour_threshold_out_of_range");
+        }
+
+        if (settings.PollIntervalMinutes
+            is < GuardSettings.MinimumPollIntervalMinutes
+                or > GuardSettings.MaximumPollIntervalMinutes)
         {
             throw new SettingsException("poll_interval_out_of_range");
         }
@@ -205,6 +213,8 @@ public sealed class JsonSettingsStore
             2 => ValidateAndMap(DeserializeRequired<SettingsDocumentV2>(root)),
             3 => ValidateAndMap(DeserializeRequired<SettingsDocumentV3>(root)),
             4 => ValidateAndMap(DeserializeRequired<SettingsDocumentV4>(root)),
+            5 => ValidateAndMap(DeserializeRequired<SettingsDocumentV5>(root)),
+            6 => ValidateAndMap(DeserializeRequired<SettingsDocumentV6>(root)),
             _ => throw new SettingsException("settings_schema_unsupported"),
         };
     }
@@ -270,19 +280,54 @@ public sealed class JsonSettingsStore
             document.AutomationEnabled,
             document.NotifyOnUsageReset);
 
+    private static GuardSettings ValidateAndMap(SettingsDocumentV5 document) =>
+        ValidateAndMap(
+            document.WeeklyRemainingThresholdPercent,
+            GuardSettings.FixedPollIntervalMinutes,
+            document.UiLanguage,
+            document.StartWithWindows,
+            document.CodexExecutablePath,
+            document.WeeklyAutomationEnabled,
+            document.NotifyOnUsageReset,
+            document.FiveHourRemainingThresholdPercent,
+            document.FiveHourAutomationEnabled,
+            migrateLegacyHundred: false);
+
+    private static GuardSettings ValidateAndMap(SettingsDocumentV6 document) =>
+        ValidateAndMap(
+            document.WeeklyRemainingThresholdPercent,
+            GuardSettings.FixedPollIntervalMinutes,
+            document.UiLanguage,
+            document.StartWithWindows,
+            document.CodexExecutablePath,
+            document.WeeklyAutomationEnabled,
+            document.NotifyOnUsageReset,
+            document.FiveHourRemainingThresholdPercent,
+            document.FiveHourAutomationEnabled,
+            migrateLegacyHundred: false);
+
     private static GuardSettings ValidateAndMap(
-        int remainingThresholdPercent,
+        int? remainingThresholdPercent,
         int pollIntervalMinutes,
         string uiLanguageValue,
         bool startWithWindows,
         string? codexExecutablePath,
         bool automationEnabled,
-        bool notifyOnUsageReset)
+        bool notifyOnUsageReset,
+        int? fiveHourRemainingThresholdPercent = 7,
+        bool fiveHourAutomationEnabled = false,
+        bool migrateLegacyHundred = true)
     {
+        if (pollIntervalMinutes is < 1 or > 60)
+        {
+            throw new SettingsException("poll_interval_out_of_range");
+        }
+
         // Version 1-4 settings previously allowed 100. Loading that value as 99
         // preserves the user's conservative intent without allowing a fully
         // recovered weekly window to remain eligible for another reset credit.
-        var migratedThresholdPercent = remainingThresholdPercent == 100
+        var migratedThresholdPercent =
+            migrateLegacyHundred && remainingThresholdPercent == 100
             ? GuardSettings.MaximumThreshold
             : remainingThresholdPercent;
         var uiLanguage = uiLanguageValue switch
@@ -295,12 +340,14 @@ public sealed class JsonSettingsStore
 
         var settings = new GuardSettings(
             migratedThresholdPercent,
-            pollIntervalMinutes,
+            GuardSettings.FixedPollIntervalMinutes,
             uiLanguage,
             startWithWindows,
             codexExecutablePath,
             automationEnabled,
-            notifyOnUsageReset);
+            notifyOnUsageReset,
+            fiveHourRemainingThresholdPercent,
+            fiveHourAutomationEnabled);
 
         Validate(settings);
         return settings;
@@ -500,7 +547,9 @@ public sealed class JsonSettingsStore
         public static SettingsDocumentV4 FromSettings(GuardSettings settings) => new()
         {
             SchemaVersion = 4,
-            RemainingThresholdPercent = settings.RemainingThresholdPercent,
+            RemainingThresholdPercent =
+                settings.RemainingThresholdPercent
+                ?? GuardSettings.MinimumThreshold,
             PollIntervalMinutes = settings.PollIntervalMinutes,
             UiLanguage = settings.UiLanguage switch
             {
@@ -511,6 +560,86 @@ public sealed class JsonSettingsStore
             StartWithWindows = settings.StartWithWindows,
             CodexExecutablePath = settings.CodexExecutablePath,
             AutomationEnabled = settings.AutomationEnabled,
+            NotifyOnUsageReset = settings.NotifyOnUsageReset,
+        };
+    }
+
+    private sealed record SettingsDocumentV5
+    {
+        [JsonRequired]
+        public int SchemaVersion { get; init; } = 5;
+
+        [JsonRequired]
+        public int WeeklyRemainingThresholdPercent { get; init; } = 7;
+
+        [JsonRequired]
+        public int FiveHourRemainingThresholdPercent { get; init; } = 7;
+
+        [JsonRequired]
+        public string UiLanguage { get; init; } = "auto";
+
+        [JsonRequired]
+        public bool StartWithWindows { get; init; }
+
+        [JsonRequired]
+        public string? CodexExecutablePath { get; init; }
+
+        [JsonRequired]
+        public bool WeeklyAutomationEnabled { get; init; }
+
+        [JsonRequired]
+        public bool FiveHourAutomationEnabled { get; init; }
+
+        [JsonRequired]
+        public bool NotifyOnUsageReset { get; init; } = true;
+    }
+
+    private sealed record SettingsDocumentV6
+    {
+        [JsonRequired]
+        public int SchemaVersion { get; init; } = 6;
+
+        [JsonRequired]
+        public int? WeeklyRemainingThresholdPercent { get; init; }
+
+        [JsonRequired]
+        public int? FiveHourRemainingThresholdPercent { get; init; }
+
+        [JsonRequired]
+        public string UiLanguage { get; init; } = "auto";
+
+        [JsonRequired]
+        public bool StartWithWindows { get; init; }
+
+        [JsonRequired]
+        public string? CodexExecutablePath { get; init; }
+
+        [JsonRequired]
+        public bool WeeklyAutomationEnabled { get; init; }
+
+        [JsonRequired]
+        public bool FiveHourAutomationEnabled { get; init; }
+
+        [JsonRequired]
+        public bool NotifyOnUsageReset { get; init; } = true;
+
+        public static SettingsDocumentV6 FromSettings(GuardSettings settings) => new()
+        {
+            SchemaVersion = 6,
+            WeeklyRemainingThresholdPercent =
+                settings.WeeklyRemainingThresholdPercent,
+            FiveHourRemainingThresholdPercent =
+                settings.FiveHourRemainingThresholdPercent,
+            UiLanguage = settings.UiLanguage switch
+            {
+                CodexAutoReset.Core.UiLanguage.Korean => "ko-KR",
+                CodexAutoReset.Core.UiLanguage.English => "en-US",
+                _ => "auto",
+            },
+            StartWithWindows = settings.StartWithWindows,
+            CodexExecutablePath = settings.CodexExecutablePath,
+            WeeklyAutomationEnabled = settings.WeeklyAutomationEnabled,
+            FiveHourAutomationEnabled = settings.FiveHourAutomationEnabled,
             NotifyOnUsageReset = settings.NotifyOnUsageReset,
         };
     }

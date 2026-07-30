@@ -166,16 +166,25 @@
                                 </Grid.ColumnDefinitions>
                                 <Grid Width="50" Height="28">
                                     <Border x:Name="Track"
-                                            Background="#D5D0C8"
-                                            BorderBrush="#C8C2BA"
                                             BorderThickness="1"
-                                            CornerRadius="14" />
+                                            CornerRadius="14">
+                                        <Border.Background>
+                                            <SolidColorBrush Color="#D5D0C8" />
+                                        </Border.Background>
+                                        <Border.BorderBrush>
+                                            <SolidColorBrush Color="#C8C2BA" />
+                                        </Border.BorderBrush>
+                                    </Border>
                                     <Ellipse x:Name="Thumb"
                                              Width="20"
                                              Height="20"
                                              Margin="4"
                                              HorizontalAlignment="Left"
-                                             Fill="#FFFFFF" />
+                                             Fill="#FFFFFF">
+                                        <Ellipse.RenderTransform>
+                                            <TranslateTransform X="0" />
+                                        </Ellipse.RenderTransform>
+                                    </Ellipse>
                                 </Grid>
                                 <TextBlock x:Name="StateLabel"
                                            Grid.Column="1"
@@ -187,10 +196,47 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="Track" Property="Background" Value="#1A1C1F" />
-                                <Setter TargetName="Track" Property="BorderBrush" Value="#1A1C1F" />
-                                <Setter TargetName="Thumb" Property="HorizontalAlignment" Value="Right" />
                                 <Setter TargetName="StateLabel" Property="Text" Value="켜짐" />
+                                <Trigger.EnterActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="Thumb"
+                                                             Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.X)"
+                                                             To="22"
+                                                             Duration="0:0:0.18"
+                                                             AccelerationRatio="0.2"
+                                                             DecelerationRatio="0.8" />
+                                            <ColorAnimation Storyboard.TargetName="Track"
+                                                            Storyboard.TargetProperty="(Border.Background).(SolidColorBrush.Color)"
+                                                            To="#1A1C1F"
+                                                            Duration="0:0:0.18" />
+                                            <ColorAnimation Storyboard.TargetName="Track"
+                                                            Storyboard.TargetProperty="(Border.BorderBrush).(SolidColorBrush.Color)"
+                                                            To="#1A1C1F"
+                                                            Duration="0:0:0.18" />
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.EnterActions>
+                                <Trigger.ExitActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="Thumb"
+                                                             Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.X)"
+                                                             To="0"
+                                                             Duration="0:0:0.18"
+                                                             AccelerationRatio="0.2"
+                                                             DecelerationRatio="0.8" />
+                                            <ColorAnimation Storyboard.TargetName="Track"
+                                                            Storyboard.TargetProperty="(Border.Background).(SolidColorBrush.Color)"
+                                                            To="#D5D0C8"
+                                                            Duration="0:0:0.18" />
+                                            <ColorAnimation Storyboard.TargetName="Track"
+                                                            Storyboard.TargetProperty="(Border.BorderBrush).(SolidColorBrush.Color)"
+                                                            To="#C8C2BA"
+                                                            Duration="0:0:0.18" />
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.ExitActions>
                             </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
                                 <Setter TargetName="FocusBorder" Property="BorderBrush" Value="#1A1C1F" />

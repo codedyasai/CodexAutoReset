@@ -49,6 +49,7 @@ public sealed class CompatibilityGuardCycleExecutorTests
         var executor = CreateExecutor(factory);
         var settings = GuardSettings.Default with
         {
+            RemainingThresholdPercent = 7,
             AutomationEnabled = true,
         };
 
@@ -91,6 +92,7 @@ public sealed class CompatibilityGuardCycleExecutorTests
         var executor = CreateExecutor(factory);
         var settings = GuardSettings.Default with
         {
+            RemainingThresholdPercent = 7,
             AutomationEnabled = true,
         };
 
@@ -135,6 +137,7 @@ public sealed class CompatibilityGuardCycleExecutorTests
         var executor = CreateExecutor(factory);
         var firstSettings = GuardSettings.Default with
         {
+            RemainingThresholdPercent = 7,
             AutomationEnabled = true,
             CodexExecutablePath = firstExecutable,
         };
@@ -164,6 +167,7 @@ public sealed class CompatibilityGuardCycleExecutorTests
         var executor = CreateExecutor(factory);
         var settings = GuardSettings.Default with
         {
+            RemainingThresholdPercent = 7,
             AutomationEnabled = true,
         };
 
@@ -185,6 +189,7 @@ public sealed class CompatibilityGuardCycleExecutorTests
         var executor = CreateExecutor(factory);
         var settings = GuardSettings.Default with
         {
+            RemainingThresholdPercent = 7,
             AutomationEnabled = true,
         };
 
@@ -241,6 +246,7 @@ public sealed class CompatibilityGuardCycleExecutorTests
         var executor = CreateExecutor(factory);
         var settings = GuardSettings.Default with
         {
+            RemainingThresholdPercent = 7,
             AutomationEnabled = true,
         };
 
@@ -268,6 +274,7 @@ public sealed class CompatibilityGuardCycleExecutorTests
         var executor = CreateExecutor(factory);
         var settings = GuardSettings.Default with
         {
+            RemainingThresholdPercent = 7,
             AutomationEnabled = true,
         };
 
@@ -285,6 +292,7 @@ public sealed class CompatibilityGuardCycleExecutorTests
     {
         var settings = GuardSettings.Default with
         {
+            RemainingThresholdPercent = 7,
             AutomationEnabled = true,
         };
         var currentRevision = string.Concat(
@@ -322,6 +330,7 @@ public sealed class CompatibilityGuardCycleExecutorTests
             CreateCompatibleSnapshot(weeklyUsedPercent: 50)));
         var settings = GuardSettings.Default with
         {
+            RemainingThresholdPercent = 7,
             AutomationEnabled = true,
         };
 

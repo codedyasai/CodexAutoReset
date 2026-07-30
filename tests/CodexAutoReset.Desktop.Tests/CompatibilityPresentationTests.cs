@@ -41,11 +41,11 @@ public sealed class CompatibilityPresentationTests
             "현재 Codex 응답을 지원하지 않습니다",
             fixture.ViewModel.OverallStatusTitle);
         Assert.AreEqual(
-            "Codex 응답을 이 버전의 CodexAutoReset이 안전하게 해석할 수 없습니다. 주간 사용량 확인과 초기화권 자동 사용을 중단했습니다. CodexAutoReset 업데이트를 확인해 주세요.",
+            "Codex 응답을 이 버전의 CodexAutoReset이 안전하게 해석할 수 없습니다. 사용량 확인과 초기화권 자동 사용을 중단했습니다. CodexAutoReset 업데이트를 확인해 주세요.",
             fixture.ViewModel.OverallStatus);
-        Assert.AreEqual("—", fixture.ViewModel.WeeklyRemainingText);
+        Assert.AreEqual("-", fixture.ViewModel.WeeklyRemainingText);
         Assert.AreEqual(
-            "주간 한도 정보를 확인할 수 없습니다.",
+            "다음 갱신 예정 · -",
             fixture.ViewModel.WeeklyResetStatus);
         Assert.AreEqual(
             lastSuccess.ToLocalTime().ToString("g", CultureInfo.CurrentCulture),
@@ -79,7 +79,7 @@ public sealed class CompatibilityPresentationTests
             "자동 초기화 호환성 확인 필요",
             fixture.ViewModel.OverallStatusTitle);
         Assert.AreEqual(
-            "주간 사용량은 정상적으로 확인되지만, 현재 Codex 버전의 초기화권 처리 형식은 검증되지 않았습니다. 안전을 위해 초기화권 자동 사용을 중단했습니다. CodexAutoReset 업데이트를 확인해 주세요.",
+            "사용량은 정상적으로 확인되지만, 현재 Codex 버전의 초기화권 처리 형식은 검증되지 않았습니다. 안전을 위해 초기화권 자동 사용을 중단했습니다. CodexAutoReset 업데이트를 확인해 주세요.",
             fixture.ViewModel.OverallStatus);
         Assert.AreEqual("63%", fixture.ViewModel.WeeklyRemainingText);
         Assert.AreEqual(63, fixture.ViewModel.WeeklyRemainingPercent);

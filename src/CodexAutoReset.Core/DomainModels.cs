@@ -1,7 +1,5 @@
 namespace CodexAutoReset.Core;
 
-// Retained only for compatibility with durable live-state records written by
-// older releases. New attempts are always weekly.
 public enum TriggerLimit
 {
     FiveHour,
@@ -16,27 +14,62 @@ public enum UiLanguage
 }
 
 public sealed record GuardSettings(
-    int RemainingThresholdPercent,
+    int? RemainingThresholdPercent,
     int PollIntervalMinutes,
     UiLanguage UiLanguage,
     bool StartWithWindows,
     string? CodexExecutablePath,
     bool AutomationEnabled = false,
-    bool NotifyOnUsageReset = true)
+    bool NotifyOnUsageReset = true,
+    int? FiveHourRemainingThresholdPercent = null,
+    bool FiveHourAutomationEnabled = false)
 {
-    public const int MinimumThreshold = 1;
+    public const int MinimumThreshold = 0;
     public const int MaximumThreshold = 99;
+    public const int FixedPollIntervalMinutes = 1;
     public const int MinimumPollIntervalMinutes = 1;
     public const int MaximumPollIntervalMinutes = 60;
 
     public static GuardSettings Default { get; } = new(
-        RemainingThresholdPercent: 7,
-        PollIntervalMinutes: 5,
+        RemainingThresholdPercent: null,
+        PollIntervalMinutes: FixedPollIntervalMinutes,
         UiLanguage: UiLanguage.Auto,
         StartWithWindows: false,
         CodexExecutablePath: null,
         AutomationEnabled: false,
-        NotifyOnUsageReset: true);
+        NotifyOnUsageReset: true,
+        FiveHourRemainingThresholdPercent: null,
+        FiveHourAutomationEnabled: false);
+
+    public int? WeeklyRemainingThresholdPercent => RemainingThresholdPercent;
+
+    public bool WeeklyAutomationEnabled => AutomationEnabled;
+
+    public bool AnyAutomationEnabled =>
+        (WeeklyRemainingThresholdPercent.HasValue
+            && WeeklyAutomationEnabled)
+        || (FiveHourRemainingThresholdPercent.HasValue
+            && FiveHourAutomationEnabled);
+
+    public int? GetRemainingThresholdPercent(TriggerLimit triggerLimit) =>
+        triggerLimit switch
+        {
+            TriggerLimit.Weekly => WeeklyRemainingThresholdPercent,
+            TriggerLimit.FiveHour => FiveHourRemainingThresholdPercent,
+            _ => throw new ArgumentOutOfRangeException(nameof(triggerLimit)),
+        };
+
+    public bool IsAutomationEnabled(TriggerLimit triggerLimit) =>
+        triggerLimit switch
+        {
+            TriggerLimit.Weekly =>
+                WeeklyRemainingThresholdPercent.HasValue
+                && WeeklyAutomationEnabled,
+            TriggerLimit.FiveHour =>
+                FiveHourRemainingThresholdPercent.HasValue
+                && FiveHourAutomationEnabled,
+            _ => throw new ArgumentOutOfRangeException(nameof(triggerLimit)),
+        };
 }
 
 public sealed record RateLimitWindow(
@@ -108,12 +141,18 @@ public sealed record GuardDecision(
     DecisionReason Reason,
     WindowReading? TriggerWindow,
     ResetCredit? SelectedCredit,
-    string? IntervalKey);
+    string? IntervalKey)
+{
+    public TriggerLimit? SelectedLimit { get; init; }
+}
 
 public sealed record EvaluationResult(
     WindowReading? Weekly,
     GuardDecision Decision,
-    long? AvailableCreditCount);
+    long? AvailableCreditCount)
+{
+    public WindowReading? FiveHour { get; init; }
+}
 
 public sealed record ConsumeResetCreditRequest
 {

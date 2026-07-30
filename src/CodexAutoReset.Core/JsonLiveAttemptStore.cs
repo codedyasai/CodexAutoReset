@@ -138,7 +138,7 @@ public sealed class JsonLiveAttemptStore
             var attempt = new StoredLiveAttempt
             {
                 IntervalKey = candidate.IntervalKey,
-                TriggerLimit = "weekly",
+                TriggerLimit = ToCode(candidate.Limit),
                 ThresholdPercent = candidate.ThresholdPercent,
                 NormalizedDurationMinutes = candidate.NormalizedDurationMinutes,
                 ResetsAt = candidate.ResetsAt,
@@ -281,12 +281,72 @@ public sealed class JsonLiveAttemptStore
         double? weeklyRemainingPercent,
         int currentThresholdPercent,
         DateTimeOffset now,
+        CancellationToken cancellationToken) =>
+        await MarkRefreshedCoreAsync(
+            observedAt,
+            triggerLimit => triggerLimit == TriggerLimit.Weekly
+                ? weeklyRemainingPercent
+                : null,
+            _ => currentThresholdPercent,
+            triggerLimit => triggerLimit == TriggerLimit.Weekly,
+            now,
+            cancellationToken).ConfigureAwait(false);
+
+    internal async Task<bool> MarkRefreshedAsync(
+        DateTimeOffset observedAt,
+        EvaluationResult evaluation,
+        GuardSettings settings,
+        DateTimeOffset now,
         CancellationToken cancellationToken)
     {
-        if (currentThresholdPercent is < GuardSettings.MinimumThreshold
-            or > GuardSettings.MaximumThreshold)
+        ArgumentNullException.ThrowIfNull(evaluation);
+        ArgumentNullException.ThrowIfNull(settings);
+        JsonSettingsStore.Validate(settings);
+
+        return await MarkRefreshedCoreAsync(
+            observedAt,
+            triggerLimit => triggerLimit switch
+            {
+                TriggerLimit.Weekly => evaluation.Weekly?.RemainingPercent,
+                TriggerLimit.FiveHour => evaluation.FiveHour?.RemainingPercent,
+                _ => null,
+            },
+            settings.GetRemainingThresholdPercent,
+            settings.IsAutomationEnabled,
+            now,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<bool> MarkRefreshedCoreAsync(
+        DateTimeOffset observedAt,
+        Func<TriggerLimit, double?> remainingProvider,
+        Func<TriggerLimit, int?> thresholdProvider,
+        Func<TriggerLimit, bool> automationEnabledProvider,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(remainingProvider);
+        ArgumentNullException.ThrowIfNull(thresholdProvider);
+        ArgumentNullException.ThrowIfNull(automationEnabledProvider);
+        foreach (var triggerLimit in Enum.GetValues<TriggerLimit>())
         {
-            throw new ArgumentOutOfRangeException(nameof(currentThresholdPercent));
+            var threshold = thresholdProvider(triggerLimit);
+            if (threshold is null)
+            {
+                if (automationEnabledProvider(triggerLimit))
+                {
+                    throw new ArgumentOutOfRangeException(
+                        nameof(thresholdProvider));
+                }
+
+                continue;
+            }
+
+            if (threshold is < GuardSettings.MinimumThreshold
+                or > GuardSettings.MaximumThreshold)
+            {
+                throw new ArgumentOutOfRangeException(nameof(thresholdProvider));
+            }
         }
 
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -303,15 +363,53 @@ public sealed class JsonLiveAttemptStore
             {
                 if (IsSuccessfulOutcome(attempt.Outcome))
                 {
+                    var triggerLimit = ParseTriggerLimit(attempt.TriggerLimit);
+                    var currentThresholdPercent =
+                        thresholdProvider(triggerLimit)
+                        ?? attempt.ThresholdPercent;
                     var recoveryThreshold = Math.Max(
                         Math.Min(
                             attempt.ThresholdPercent,
                             GuardSettings.MaximumThreshold),
                         currentThresholdPercent);
-                    if (weeklyRemainingPercent is not { } remainingPercent
+                    var triggerRemainingPercent =
+                        remainingProvider(triggerLimit);
+                    if (triggerRemainingPercent is not { } remainingPercent
                         || !double.IsFinite(remainingPercent)
                         || remainingPercent is < 0d or > 100d
                         || remainingPercent <= recoveryThreshold)
+                    {
+                        continue;
+                    }
+
+                    var allPresentEnabledWindowsRecovered = true;
+                    foreach (var enabledLimit in Enum.GetValues<TriggerLimit>())
+                    {
+                        if (enabledLimit == triggerLimit
+                            || !automationEnabledProvider(enabledLimit))
+                        {
+                            continue;
+                        }
+
+                        var enabledRemaining = remainingProvider(enabledLimit);
+                        if (enabledRemaining is null)
+                        {
+                            continue;
+                        }
+
+                        if (!double.IsFinite(enabledRemaining.Value)
+                            || enabledRemaining.Value is < 0d or > 100d
+                            || enabledRemaining.Value
+                                <= (thresholdProvider(enabledLimit)
+                                    ?? throw new InvalidOperationException(
+                                        "enabled_threshold_missing")))
+                        {
+                            allPresentEnabledWindowsRecovered = false;
+                            break;
+                        }
+                    }
+
+                    if (!allPresentEnabledWindowsRecovered)
                     {
                         continue;
                     }
@@ -524,11 +622,12 @@ public sealed class JsonLiveAttemptStore
             || candidate.ResetsAt <= 0
             || candidate.ResetsAt
                 < now.ToUnixTimeSeconds() - ExpiredResetClockSkewSeconds
-            || candidate.NormalizedDurationMinutes != ExpectedDuration(TriggerLimit.Weekly)
+            || !Enum.IsDefined(candidate.Limit)
+            || candidate.NormalizedDurationMinutes != ExpectedDuration(candidate.Limit)
             || !string.Equals(
                 candidate.IntervalKey,
                 BuildIntervalKey(
-                    TriggerLimit.Weekly,
+                    candidate.Limit,
                     candidate.NormalizedDurationMinutes,
                     candidate.ResetsAt),
                 StringComparison.Ordinal))
@@ -738,6 +837,13 @@ public sealed class JsonLiveAttemptStore
         _ => throw InvalidState(),
     };
 
+    private static string ToCode(TriggerLimit triggerLimit) => triggerLimit switch
+    {
+        TriggerLimit.FiveHour => "fiveHour",
+        TriggerLimit.Weekly => "weekly",
+        _ => throw InvalidState(),
+    };
+
     private static string ToCode(LiveAttemptBlockReason reason) => reason switch
     {
         LiveAttemptBlockReason.ContextChanged => "contextChanged",
@@ -848,7 +954,8 @@ internal sealed record LiveAttemptCandidate(
     string IntervalKey,
     int ThresholdPercent,
     long NormalizedDurationMinutes,
-    long ResetsAt);
+    long ResetsAt,
+    TriggerLimit Limit = TriggerLimit.Weekly);
 
 internal enum LivePrepareDisposition
 {

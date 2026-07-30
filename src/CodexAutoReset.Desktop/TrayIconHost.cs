@@ -15,6 +15,7 @@ public sealed class TrayIconHost : IDisposable
     private readonly Forms.NotifyIcon notifyIcon;
     private readonly Forms.ToolStripMenuItem statusItem;
     private readonly Forms.ToolStripMenuItem weeklyItem;
+    private readonly Forms.ToolStripMenuItem fiveHourItem;
     private readonly Forms.ToolStripMenuItem creditsItem;
     private readonly Forms.ToolStripMenuItem startupItem;
     private readonly CompatibilityNotificationGate compatibilityNotificationGate;
@@ -43,6 +44,7 @@ public sealed class TrayIconHost : IDisposable
 
         statusItem = new Forms.ToolStripMenuItem("상태: 확인 전") { Enabled = false };
         weeklyItem = new Forms.ToolStripMenuItem("주간: 확인 전") { Enabled = false };
+        fiveHourItem = new Forms.ToolStripMenuItem("5시간: 확인 전") { Enabled = false };
         creditsItem = new Forms.ToolStripMenuItem("초기화권: 확인 전") { Enabled = false };
         startupItem = new Forms.ToolStripMenuItem("Windows 자동 시작");
         startupItem.Click += OnStartupClick;
@@ -66,6 +68,7 @@ public sealed class TrayIconHost : IDisposable
         [
             statusItem,
             weeklyItem,
+            fiveHourItem,
             creditsItem,
             new Forms.ToolStripSeparator(),
             refreshItem,
@@ -138,8 +141,10 @@ public sealed class TrayIconHost : IDisposable
                             ? "상태: 처리 완료 · 초기화 항목 없음"
                             : $"상태: {FormatStatus(snapshot.StatusCode)}",
         };
-        weeklyItem.Text = $"주간: {FormatRemaining(snapshot.Weekly)}";
-        creditsItem.Text = $"초기화권: {snapshot.AvailableCreditCount?.ToString() ?? "알 수 없음"}";
+        weeklyItem.Text = $"주간: {FormatRemaining(viewModel.WeeklyRemainingText)}";
+        fiveHourItem.Text =
+            $"5시간: {FormatRemaining(viewModel.FiveHourRemainingText)}";
+        creditsItem.Text = $"초기화권: {snapshot.AvailableCreditCount?.ToString() ?? "-"}";
         startupItem.Checked = viewModel.IsStartupActuallyEnabled;
         startupItem.Text = viewModel.ActualStartupStatus switch
         {
@@ -220,7 +225,7 @@ public sealed class TrayIconHost : IDisposable
         "waiting" => "확인 전",
         "automation_disabled" => "사용량 확인 완료",
         "no_action" => "정상 · 초기화 조건 미충족",
-        "duplicate_suppressed" => "정상 · 이번 주간 구간은 이미 처리됨",
+        "duplicate_suppressed" => "정상 · 이 한도 구간은 이미 처리됨",
         "live_recovery_pending" => "안전 대기 · 초기화 후 잔여량 회복 확인 중",
         "usage_reset_settling" => "안전 대기 · 사용량 초기화 반영 확인 중",
         "usage_reset_state_unavailable" => "안전 차단 · 초기화 확인 기록 오류",
@@ -258,10 +263,20 @@ public sealed class TrayIconHost : IDisposable
     private void OnBalloonTipClicked(object? sender, EventArgs eventArgs) =>
         Dispatch(window.ShowAndActivate);
 
-    private static string FormatRemaining(Core.WindowReading? reading) =>
-        reading is null ? "알 수 없음" : $"잔여 {reading.RemainingPercent:F0}%";
+    private static string FormatRemaining(string remainingText)
+    {
+        if (string.IsNullOrWhiteSpace(remainingText)
+            || string.Equals(remainingText, "-", StringComparison.Ordinal))
+        {
+            return "-";
+        }
 
-    private static string BuildTooltip(MonitorSnapshot snapshot)
+        return remainingText.EndsWith("%", StringComparison.Ordinal)
+            ? $"잔여 {remainingText}"
+            : remainingText;
+    }
+
+    private string BuildTooltip(MonitorSnapshot snapshot)
     {
         if (snapshot.CompatibilityState is
             CodexCompatibilityState.ReadUnsupported
@@ -276,13 +291,19 @@ public sealed class TrayIconHost : IDisposable
             return "CodexAutoReset · Codex 응답 재확인 중";
         }
 
-        var remaining = snapshot.Weekly is null
-            ? "?"
-            : $"{snapshot.Weekly.RemainingPercent:F0}%";
+        var weeklyRemaining = ToTooltipRemaining(viewModel.WeeklyRemainingText);
+        var fiveHourRemaining =
+            ToTooltipRemaining(viewModel.FiveHourRemainingText);
         var text =
-            $"CodexAutoReset · 주간 {remaining} · 권 {snapshot.AvailableCreditCount?.ToString() ?? "?"}";
+            $"CodexAutoReset · 주간 {weeklyRemaining} · 5시간 {fiveHourRemaining} · 권 {snapshot.AvailableCreditCount?.ToString() ?? "-"}";
         return text.Length <= 63 ? text : text[..63];
     }
+
+    private static string ToTooltipRemaining(string remainingText) =>
+        string.IsNullOrWhiteSpace(remainingText)
+            || string.Equals(remainingText, "-", StringComparison.Ordinal)
+            ? "-"
+            : remainingText;
 
     private static void Dispatch(Action action)
     {

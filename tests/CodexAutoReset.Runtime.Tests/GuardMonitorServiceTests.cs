@@ -81,6 +81,7 @@ public sealed class GuardMonitorServiceTests
         {
             var liveSettings = GuardSettings.Default with
             {
+                RemainingThresholdPercent = 7,
                 AutomationEnabled = true,
             };
             var disabledSettings = liveSettings with
@@ -159,7 +160,14 @@ public sealed class GuardMonitorServiceTests
                 executablePath,
                 CancellationToken.None);
 
-            Assert.AreEqual(currentSettings with { StartWithWindows = true }, updated);
+            Assert.AreEqual(
+                currentSettings with
+                {
+                    StartWithWindows = true,
+                    PollIntervalMinutes =
+                        GuardSettings.FixedPollIntervalMinutes,
+                },
+                updated);
             Assert.AreEqual(updated, await settingsStore.LoadAsync(CancellationToken.None));
             Assert.AreEqual(StartupStatus.Enabled, new StartupService(registry).GetState().Status);
         }
@@ -221,6 +229,7 @@ public sealed class GuardMonitorServiceTests
         {
             var liveSettings = GuardSettings.Default with
             {
+                RemainingThresholdPercent = 7,
                 AutomationEnabled = true,
             };
             var disabledSettings = liveSettings with
@@ -279,6 +288,7 @@ public sealed class GuardMonitorServiceTests
         {
             var liveSettings = GuardSettings.Default with
             {
+                RemainingThresholdPercent = 7,
                 AutomationEnabled = true,
             };
             var settingsStore = new JsonSettingsStore(paths.SettingsFile);

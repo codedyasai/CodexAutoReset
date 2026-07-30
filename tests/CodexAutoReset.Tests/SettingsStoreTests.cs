@@ -62,8 +62,38 @@ public sealed class SettingsStoreTests
         }
         """;
 
+    private const string ValidV5SettingsJson =
+        """
+        {
+          "schemaVersion": 5,
+          "weeklyRemainingThresholdPercent": 11,
+          "fiveHourRemainingThresholdPercent": 23,
+          "uiLanguage": "auto",
+          "startWithWindows": false,
+          "codexExecutablePath": null,
+          "weeklyAutomationEnabled": false,
+          "fiveHourAutomationEnabled": true,
+          "notifyOnUsageReset": true
+        }
+        """;
+
+    private const string ValidV6SettingsJson =
+        """
+        {
+          "schemaVersion": 6,
+          "weeklyRemainingThresholdPercent": 0,
+          "fiveHourRemainingThresholdPercent": null,
+          "uiLanguage": "auto",
+          "startWithWindows": false,
+          "codexExecutablePath": null,
+          "weeklyAutomationEnabled": true,
+          "fiveHourAutomationEnabled": false,
+          "notifyOnUsageReset": true
+        }
+        """;
+
     [TestMethod]
-    public async Task MissingSettingsCreateVersionFourDefaults()
+    public async Task MissingSettingsCreateVersionSixDefaults()
     {
         using var directory = TemporaryDirectory.Create();
         var path = Path.Combine(directory.Path, "settings.json");
@@ -72,12 +102,32 @@ public sealed class SettingsStoreTests
         var settings = await store.LoadOrCreateAsync(CancellationToken.None);
 
         Assert.AreEqual(GuardSettings.Default, settings);
+        Assert.IsNull(settings.WeeklyRemainingThresholdPercent);
         Assert.IsFalse(settings.AutomationEnabled);
+        Assert.IsNull(settings.FiveHourRemainingThresholdPercent);
+        Assert.IsFalse(settings.FiveHourAutomationEnabled);
+        Assert.IsFalse(settings.AnyAutomationEnabled);
         Assert.IsTrue(settings.NotifyOnUsageReset);
+        Assert.AreEqual(
+            GuardSettings.FixedPollIntervalMinutes,
+            settings.PollIntervalMinutes);
         var json = await File.ReadAllTextAsync(path, Encoding.UTF8);
-        StringAssert.Contains(json, "\"schemaVersion\": 4");
-        StringAssert.Contains(json, "\"automationEnabled\": false");
+        StringAssert.Contains(json, "\"schemaVersion\": 6");
+        StringAssert.Contains(
+            json,
+            "\"weeklyRemainingThresholdPercent\": null");
+        StringAssert.Contains(
+            json,
+            "\"fiveHourRemainingThresholdPercent\": null");
+        StringAssert.Contains(json, "\"weeklyAutomationEnabled\": false");
+        StringAssert.Contains(json, "\"fiveHourAutomationEnabled\": false");
         StringAssert.Contains(json, "\"notifyOnUsageReset\": true");
+        Assert.IsFalse(
+            json.Contains("pollIntervalMinutes", StringComparison.Ordinal));
+        Assert.IsFalse(
+            json.Contains("remainingThresholdPercent", StringComparison.Ordinal));
+        Assert.IsFalse(
+            json.Contains("\"automationEnabled\"", StringComparison.Ordinal));
         Assert.IsFalse(json.Contains("triggerLimit", StringComparison.Ordinal));
         Assert.IsFalse(json.Contains("executionMode", StringComparison.Ordinal));
         Assert.AreEqual(settings, await store.LoadAsync(CancellationToken.None));
@@ -94,6 +144,11 @@ public sealed class SettingsStoreTests
         var settings = await LoadSettingsAsync(document.ToJsonString());
 
         Assert.IsFalse(settings.AutomationEnabled);
+        Assert.IsFalse(settings.FiveHourAutomationEnabled);
+        Assert.AreEqual(7, settings.FiveHourRemainingThresholdPercent);
+        Assert.AreEqual(
+            GuardSettings.FixedPollIntervalMinutes,
+            settings.PollIntervalMinutes);
     }
 
     [DataTestMethod]
@@ -113,29 +168,207 @@ public sealed class SettingsStoreTests
         var settings = await LoadSettingsAsync(document.ToJsonString());
 
         Assert.AreEqual(expectedEnabled, settings.AutomationEnabled);
+        Assert.IsFalse(settings.FiveHourAutomationEnabled);
+        Assert.AreEqual(7, settings.FiveHourRemainingThresholdPercent);
+        Assert.AreEqual(
+            GuardSettings.FixedPollIntervalMinutes,
+            settings.PollIntervalMinutes);
+    }
+
+    [DataTestMethod]
+    [DataRow(1)]
+    [DataRow(2)]
+    [DataRow(3)]
+    [DataRow(4)]
+    public async Task VersionOneThroughFourMigrateToFixedOneMinutePoll(
+        int schemaVersion)
+    {
+        var json = schemaVersion switch
+        {
+            1 => ValidV1SettingsJson,
+            2 => ValidV2SettingsJson,
+            3 => ValidV3SettingsJson,
+            4 => ValidV4SettingsJson,
+            _ => throw new AssertFailedException(),
+        };
+        var document = JsonNode.Parse(json)!.AsObject();
+        document["pollIntervalMinutes"] = 60;
+
+        var settings = await LoadSettingsAsync(document.ToJsonString());
+
+        Assert.AreEqual(
+            GuardSettings.FixedPollIntervalMinutes,
+            settings.PollIntervalMinutes);
+        Assert.AreEqual(7, settings.FiveHourRemainingThresholdPercent);
+        Assert.IsFalse(settings.FiveHourAutomationEnabled);
+    }
+
+    [DataTestMethod]
+    [DataRow(3)]
+    [DataRow(4)]
+    public async Task VersionThreeAndFourMapLegacyValuesToWeeklyOnly(
+        int schemaVersion)
+    {
+        var json = schemaVersion == 3
+            ? ValidV3SettingsJson
+            : ValidV4SettingsJson;
+        var document = JsonNode.Parse(json)!.AsObject();
+        document["remainingThresholdPercent"] = 41;
+        document["automationEnabled"] = true;
+
+        var settings = await LoadSettingsAsync(document.ToJsonString());
+
+        Assert.AreEqual(41, settings.WeeklyRemainingThresholdPercent);
+        Assert.AreEqual(7, settings.FiveHourRemainingThresholdPercent);
+        Assert.IsTrue(settings.WeeklyAutomationEnabled);
+        Assert.IsFalse(settings.FiveHourAutomationEnabled);
+        Assert.AreEqual(
+            GuardSettings.FixedPollIntervalMinutes,
+            settings.PollIntervalMinutes);
     }
 
     [TestMethod]
-    public async Task VersionFourSettingsRoundTripWithoutLegacyFields()
+    public async Task VersionSixSettingsRoundTripWithoutLegacyOrPollFields()
     {
         using var directory = TemporaryDirectory.Create();
         var path = Path.Combine(directory.Path, "settings.json");
         var store = new JsonSettingsStore(path);
         var enabled = GuardSettings.Default with
         {
+            RemainingThresholdPercent = 13,
+            FiveHourRemainingThresholdPercent = 29,
             AutomationEnabled = true,
+            FiveHourAutomationEnabled = false,
             NotifyOnUsageReset = false,
         };
 
         await store.SaveAsync(enabled, CancellationToken.None);
 
         var json = await File.ReadAllTextAsync(path, Encoding.UTF8);
-        StringAssert.Contains(json, "\"schemaVersion\": 4");
-        StringAssert.Contains(json, "\"automationEnabled\": true");
+        StringAssert.Contains(json, "\"schemaVersion\": 6");
+        StringAssert.Contains(
+            json,
+            "\"weeklyRemainingThresholdPercent\": 13");
+        StringAssert.Contains(
+            json,
+            "\"fiveHourRemainingThresholdPercent\": 29");
+        StringAssert.Contains(json, "\"weeklyAutomationEnabled\": true");
+        StringAssert.Contains(json, "\"fiveHourAutomationEnabled\": false");
         StringAssert.Contains(json, "\"notifyOnUsageReset\": false");
+        Assert.IsFalse(
+            json.Contains("pollIntervalMinutes", StringComparison.Ordinal));
+        Assert.IsFalse(
+            json.Contains("\"remainingThresholdPercent\"", StringComparison.Ordinal));
+        Assert.IsFalse(
+            json.Contains("\"automationEnabled\"", StringComparison.Ordinal));
         Assert.IsFalse(json.Contains("triggerLimit", StringComparison.Ordinal));
         Assert.IsFalse(json.Contains("executionMode", StringComparison.Ordinal));
         Assert.AreEqual(enabled, await store.LoadAsync(CancellationToken.None));
+    }
+
+    [TestMethod]
+    public async Task VersionSixRoundTripsBothNullableThresholdsAndRawToggles()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var path = Path.Combine(directory.Path, "settings.json");
+        var store = new JsonSettingsStore(path);
+        var nullable = GuardSettings.Default with
+        {
+            RemainingThresholdPercent = null,
+            AutomationEnabled = true,
+            FiveHourRemainingThresholdPercent = null,
+            FiveHourAutomationEnabled = true,
+            NotifyOnUsageReset = false,
+        };
+
+        await store.SaveAsync(nullable, CancellationToken.None);
+
+        var json = await File.ReadAllTextAsync(path, Encoding.UTF8);
+        StringAssert.Contains(
+            json,
+            "\"weeklyRemainingThresholdPercent\": null");
+        StringAssert.Contains(
+            json,
+            "\"fiveHourRemainingThresholdPercent\": null");
+        StringAssert.Contains(json, "\"weeklyAutomationEnabled\": true");
+        StringAssert.Contains(json, "\"fiveHourAutomationEnabled\": true");
+        var loaded = await store.LoadAsync(CancellationToken.None);
+        Assert.AreEqual(nullable, loaded);
+        Assert.IsTrue(loaded.WeeklyAutomationEnabled);
+        Assert.IsTrue(loaded.FiveHourAutomationEnabled);
+        Assert.IsFalse(loaded.IsAutomationEnabled(TriggerLimit.Weekly));
+        Assert.IsFalse(loaded.IsAutomationEnabled(TriggerLimit.FiveHour));
+        Assert.IsFalse(loaded.AnyAutomationEnabled);
+    }
+
+    [TestMethod]
+    public async Task VersionFiveLoadsIndependentThresholdsAndToggles()
+    {
+        var settings = await LoadSettingsAsync(ValidV5SettingsJson);
+
+        Assert.AreEqual(11, settings.WeeklyRemainingThresholdPercent);
+        Assert.AreEqual(23, settings.FiveHourRemainingThresholdPercent);
+        Assert.IsFalse(settings.WeeklyAutomationEnabled);
+        Assert.IsTrue(settings.FiveHourAutomationEnabled);
+        Assert.AreEqual(
+            GuardSettings.FixedPollIntervalMinutes,
+            settings.PollIntervalMinutes);
+    }
+
+    [TestMethod]
+    public async Task VersionFiveMigratesToVersionSixWithoutChangingValues()
+    {
+        using var directory = TemporaryDirectory.Create();
+        var path = Path.Combine(directory.Path, "settings.json");
+        await File.WriteAllTextAsync(path, ValidV5SettingsJson);
+        var store = new JsonSettingsStore(path);
+
+        var settings = await store.LoadAsync(CancellationToken.None);
+        await store.SaveAsync(settings, CancellationToken.None);
+
+        Assert.AreEqual(11, settings.WeeklyRemainingThresholdPercent);
+        Assert.AreEqual(23, settings.FiveHourRemainingThresholdPercent);
+        Assert.IsFalse(settings.WeeklyAutomationEnabled);
+        Assert.IsTrue(settings.FiveHourAutomationEnabled);
+        var json = await File.ReadAllTextAsync(path, Encoding.UTF8);
+        StringAssert.Contains(json, "\"schemaVersion\": 6");
+        StringAssert.Contains(
+            json,
+            "\"weeklyRemainingThresholdPercent\": 11");
+        StringAssert.Contains(
+            json,
+            "\"fiveHourRemainingThresholdPercent\": 23");
+        StringAssert.Contains(json, "\"weeklyAutomationEnabled\": false");
+        StringAssert.Contains(json, "\"fiveHourAutomationEnabled\": true");
+        Assert.AreEqual(settings, await store.LoadAsync(CancellationToken.None));
+    }
+
+    [TestMethod]
+    public async Task VersionSixLoadsUnsetFiveHourThreshold()
+    {
+        var settings = await LoadSettingsAsync(ValidV6SettingsJson);
+
+        Assert.AreEqual(0, settings.WeeklyRemainingThresholdPercent);
+        Assert.IsNull(settings.FiveHourRemainingThresholdPercent);
+        Assert.IsTrue(settings.WeeklyAutomationEnabled);
+        Assert.IsFalse(settings.FiveHourAutomationEnabled);
+    }
+
+    [TestMethod]
+    public void UnsetFiveHourThresholdDisablesEffectiveAutomation()
+    {
+        var settings = GuardSettings.Default with
+        {
+            AutomationEnabled = false,
+            FiveHourRemainingThresholdPercent = null,
+            FiveHourAutomationEnabled = true,
+        };
+
+        Assert.IsTrue(settings.FiveHourAutomationEnabled);
+        Assert.IsFalse(settings.IsAutomationEnabled(TriggerLimit.FiveHour));
+        Assert.IsFalse(settings.AnyAutomationEnabled);
+        Assert.IsNull(
+            settings.GetRemainingThresholdPercent(TriggerLimit.FiveHour));
     }
 
     [TestMethod]
@@ -147,20 +380,21 @@ public sealed class SettingsStoreTests
     }
 
     [DataTestMethod]
+    [DataRow(0)]
     [DataRow(1)]
     [DataRow(7)]
     [DataRow(99)]
-    public void ThresholdBoundaryValuesAreValid(int threshold) =>
+    public void WeeklyThresholdBoundaryValuesAreValid(int threshold) =>
         JsonSettingsStore.Validate(GuardSettings.Default with
         {
             RemainingThresholdPercent = threshold,
         });
 
     [DataTestMethod]
-    [DataRow(0)]
+    [DataRow(-1)]
     [DataRow(100)]
     [DataRow(101)]
-    public void ThresholdOutsideRangeIsRejected(int threshold)
+    public void WeeklyThresholdOutsideRangeIsRejected(int threshold)
     {
         var exception = Assert.ThrowsException<SettingsException>(() =>
             JsonSettingsStore.Validate(GuardSettings.Default with
@@ -168,6 +402,60 @@ public sealed class SettingsStoreTests
                 RemainingThresholdPercent = threshold,
             }));
         Assert.AreEqual("threshold_out_of_range", exception.ReasonCode);
+    }
+
+    [DataTestMethod]
+    [DataRow(0)]
+    [DataRow(1)]
+    [DataRow(7)]
+    [DataRow(99)]
+    public void FiveHourThresholdBoundaryValuesAreValid(int threshold) =>
+        JsonSettingsStore.Validate(GuardSettings.Default with
+        {
+            FiveHourRemainingThresholdPercent = threshold,
+        });
+
+    [TestMethod]
+    public void UnsetFiveHourThresholdIsValid() =>
+        JsonSettingsStore.Validate(GuardSettings.Default with
+        {
+            FiveHourRemainingThresholdPercent = null,
+        });
+
+    [DataTestMethod]
+    [DataRow(-1)]
+    [DataRow(100)]
+    [DataRow(101)]
+    public void FiveHourThresholdOutsideRangeIsRejected(int threshold)
+    {
+        var exception = Assert.ThrowsException<SettingsException>(() =>
+            JsonSettingsStore.Validate(GuardSettings.Default with
+            {
+                FiveHourRemainingThresholdPercent = threshold,
+            }));
+        Assert.AreEqual(
+            "five_hour_threshold_out_of_range",
+            exception.ReasonCode);
+    }
+
+    [DataTestMethod]
+    [DataRow(
+        "weeklyRemainingThresholdPercent",
+        "threshold_out_of_range")]
+    [DataRow(
+        "fiveHourRemainingThresholdPercent",
+        "five_hour_threshold_out_of_range")]
+    public async Task VersionFiveDoesNotMigrateOutOfRangeThresholds(
+        string propertyName,
+        string expectedReason)
+    {
+        var document = JsonNode.Parse(ValidV5SettingsJson)!.AsObject();
+        document[propertyName] = 100;
+
+        var exception = await LoadInvalidSettingsAsync(
+            document.ToJsonString());
+
+        Assert.AreEqual(expectedReason, exception.ReasonCode);
     }
 
     [DataTestMethod]
@@ -275,6 +563,84 @@ public sealed class SettingsStoreTests
     {
         var document = JsonNode.Parse(ValidV4SettingsJson)!.AsObject();
         Assert.IsTrue(document.Remove(propertyName));
+
+        var exception = await LoadInvalidSettingsAsync(document.ToJsonString());
+
+        Assert.AreEqual("settings_invalid_json", exception.ReasonCode);
+    }
+
+    [DataTestMethod]
+    [DataRow("schemaVersion")]
+    [DataRow("weeklyRemainingThresholdPercent")]
+    [DataRow("fiveHourRemainingThresholdPercent")]
+    [DataRow("uiLanguage")]
+    [DataRow("startWithWindows")]
+    [DataRow("codexExecutablePath")]
+    [DataRow("weeklyAutomationEnabled")]
+    [DataRow("fiveHourAutomationEnabled")]
+    [DataRow("notifyOnUsageReset")]
+    public async Task MissingVersionFiveFieldFailsClosed(string propertyName)
+    {
+        var document = JsonNode.Parse(ValidV5SettingsJson)!.AsObject();
+        Assert.IsTrue(document.Remove(propertyName));
+
+        var exception = await LoadInvalidSettingsAsync(document.ToJsonString());
+
+        Assert.AreEqual("settings_invalid_json", exception.ReasonCode);
+    }
+
+    [DataTestMethod]
+    [DataRow("schemaVersion")]
+    [DataRow("weeklyRemainingThresholdPercent")]
+    [DataRow("fiveHourRemainingThresholdPercent")]
+    [DataRow("uiLanguage")]
+    [DataRow("startWithWindows")]
+    [DataRow("codexExecutablePath")]
+    [DataRow("weeklyAutomationEnabled")]
+    [DataRow("fiveHourAutomationEnabled")]
+    [DataRow("notifyOnUsageReset")]
+    public async Task MissingVersionSixFieldFailsClosed(string propertyName)
+    {
+        var document = JsonNode.Parse(ValidV6SettingsJson)!.AsObject();
+        Assert.IsTrue(document.Remove(propertyName));
+
+        var exception = await LoadInvalidSettingsAsync(document.ToJsonString());
+
+        Assert.AreEqual("settings_invalid_json", exception.ReasonCode);
+    }
+
+    [DataTestMethod]
+    [DataRow("pollIntervalMinutes", "1")]
+    [DataRow("remainingThresholdPercent", "7")]
+    [DataRow("automationEnabled", "false")]
+    [DataRow("triggerLimit", "\"weekly\"")]
+    [DataRow("executionMode", "\"live\"")]
+    [DataRow("unexpected", "true")]
+    public async Task VersionFiveRejectsLegacyPollAndUnknownProperties(
+        string propertyName,
+        string jsonValue)
+    {
+        var document = JsonNode.Parse(ValidV5SettingsJson)!.AsObject();
+        document[propertyName] = JsonNode.Parse(jsonValue);
+
+        var exception = await LoadInvalidSettingsAsync(document.ToJsonString());
+
+        Assert.AreEqual("settings_invalid_json", exception.ReasonCode);
+    }
+
+    [DataTestMethod]
+    [DataRow("pollIntervalMinutes", "1")]
+    [DataRow("remainingThresholdPercent", "7")]
+    [DataRow("automationEnabled", "false")]
+    [DataRow("triggerLimit", "\"weekly\"")]
+    [DataRow("executionMode", "\"live\"")]
+    [DataRow("unexpected", "true")]
+    public async Task VersionSixRejectsLegacyPollAndUnknownProperties(
+        string propertyName,
+        string jsonValue)
+    {
+        var document = JsonNode.Parse(ValidV6SettingsJson)!.AsObject();
+        document[propertyName] = JsonNode.Parse(jsonValue);
 
         var exception = await LoadInvalidSettingsAsync(document.ToJsonString());
 

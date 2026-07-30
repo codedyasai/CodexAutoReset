@@ -18,15 +18,20 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private int stopping;
     private GuardSettings persistedSettings;
     private string thresholdText;
+    private string fiveHourThresholdText;
     private string pollIntervalText;
     private string? codexExecutablePath;
     private bool automationEnabled;
+    private bool fiveHourAutomationEnabled;
     private bool notifyOnUsageReset;
     private bool startWithWindows;
-    private string weeklyRemainingText = "—";
+    private string weeklyRemainingText = "-";
     private double weeklyRemainingPercent;
-    private string weeklyResetStatus = "아직 확인하지 않았습니다.";
-    private string creditStatus = "확인 전";
+    private string weeklyResetStatus = "다음 갱신 예정 · -";
+    private string fiveHourRemainingText = "-";
+    private double fiveHourRemainingPercent;
+    private string fiveHourResetStatus = "다음 갱신 예정 · -";
+    private string creditStatus = "-";
     private string lastCheckedStatus = "확인 전";
     private string overallStatusTitle = string.Empty;
     private string overallStatus = string.Empty;
@@ -51,12 +56,17 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         this.currentExecutablePathProvider = currentExecutablePathProvider
             ?? (() => Environment.ProcessPath);
         persistedSettings = initialSettings;
-        thresholdText = initialSettings.RemainingThresholdPercent.ToString(
-            CultureInfo.InvariantCulture);
+        thresholdText = FormatThreshold(
+            initialSettings.RemainingThresholdPercent);
+        fiveHourThresholdText = FormatThreshold(
+            initialSettings.FiveHourRemainingThresholdPercent);
         pollIntervalText = initialSettings.PollIntervalMinutes.ToString(
             CultureInfo.InvariantCulture);
         codexExecutablePath = initialSettings.CodexExecutablePath;
-        automationEnabled = initialSettings.AutomationEnabled;
+        automationEnabled =
+            initialSettings.IsAutomationEnabled(TriggerLimit.Weekly);
+        fiveHourAutomationEnabled =
+            initialSettings.IsAutomationEnabled(TriggerLimit.FiveHour);
         notifyOnUsageReset = initialSettings.NotifyOnUsageReset;
         startWithWindows = initialSettings.StartWithWindows;
         currentSnapshot = monitor.CurrentSnapshot;
@@ -72,6 +82,12 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     {
         get => thresholdText;
         set => SetField(ref thresholdText, value);
+    }
+
+    public string FiveHourThresholdText
+    {
+        get => fiveHourThresholdText;
+        set => SetField(ref fiveHourThresholdText, value);
     }
 
     public string PollIntervalText
@@ -105,12 +121,36 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             if (SetField(ref automationEnabled, value))
             {
                 OnPropertyChanged(nameof(RequiresAutomationEnableConfirmation));
+                OnPropertyChanged(nameof(AnyAutomationEnabled));
             }
         }
     }
 
     public bool RequiresAutomationEnableConfirmation =>
-        AutomationEnabled && !persistedSettings.AutomationEnabled;
+        AutomationEnabled
+        && !persistedSettings.IsAutomationEnabled(TriggerLimit.Weekly);
+
+    public bool FiveHourAutomationEnabled
+    {
+        get => fiveHourAutomationEnabled;
+        set
+        {
+            if (SetField(ref fiveHourAutomationEnabled, value))
+            {
+                OnPropertyChanged(
+                    nameof(RequiresFiveHourAutomationEnableConfirmation));
+                OnPropertyChanged(nameof(AnyAutomationEnabled));
+            }
+        }
+    }
+
+    public bool RequiresFiveHourAutomationEnableConfirmation =>
+        FiveHourAutomationEnabled
+        && !persistedSettings.IsAutomationEnabled(
+            TriggerLimit.FiveHour);
+
+    public bool AnyAutomationEnabled =>
+        AutomationEnabled || FiveHourAutomationEnabled;
 
     public bool NotifyOnUsageReset
     {
@@ -154,6 +194,24 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     {
         get => weeklyResetStatus;
         private set => SetField(ref weeklyResetStatus, value);
+    }
+
+    public string FiveHourRemainingText
+    {
+        get => fiveHourRemainingText;
+        private set => SetField(ref fiveHourRemainingText, value);
+    }
+
+    public double FiveHourRemainingPercent
+    {
+        get => fiveHourRemainingPercent;
+        private set => SetField(ref fiveHourRemainingPercent, value);
+    }
+
+    public string FiveHourResetStatus
+    {
+        get => fiveHourResetStatus;
+        private set => SetField(ref fiveHourResetStatus, value);
     }
 
     public string CreditStatus
@@ -239,8 +297,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         IsRefreshing && System.Windows.SystemParameters.ClientAreaAnimation;
 
     public string RefreshAutomationName => IsRefreshing
-        ? "주간 사용량 새로고침 중"
-        : "주간 사용량 새로고침";
+        ? "사용량 새로고침 중"
+        : "사용량 새로고침";
 
     public string RefreshStatusText => IsRefreshing
         ? "확인 중…"
@@ -395,29 +453,50 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     public async Task<bool> SetAutomationEnabledAsync(
         bool enabled,
-        bool automationEnableConfirmed = false)
+        bool automationEnableConfirmed = false) =>
+        await SetAutomationEnabledAsync(
+            TriggerLimit.Weekly,
+            enabled,
+            automationEnableConfirmed);
+
+    public async Task<bool> SetFiveHourAutomationEnabledAsync(
+        bool enabled,
+        bool automationEnableConfirmed = false) =>
+        await SetAutomationEnabledAsync(
+            TriggerLimit.FiveHour,
+            enabled,
+            automationEnableConfirmed);
+
+    private async Task<bool> SetAutomationEnabledAsync(
+        TriggerLimit triggerLimit,
+        bool enabled,
+        bool automationEnableConfirmed)
     {
         if (Volatile.Read(ref stopping) != 0)
         {
             return false;
         }
 
+        var persistedEnabled =
+            persistedSettings.IsAutomationEnabled(triggerLimit);
         if (enabled
-            && !persistedSettings.AutomationEnabled
+            && !persistedEnabled
             && !automationEnableConfirmed)
         {
-            AutomationEnabled = persistedSettings.AutomationEnabled;
+            SetAutomationEnabled(triggerLimit, persistedEnabled);
             SaveStatus = "초기화권 자동 사용을 켜려면 초기화권 사용 가능성을 확인해야 합니다.";
             return false;
         }
 
-        AutomationEnabled = enabled;
+        SetAutomationEnabled(triggerLimit, enabled);
         await saveGate.WaitAsync();
         try
         {
             if (Volatile.Read(ref stopping) != 0)
             {
-                AutomationEnabled = persistedSettings.AutomationEnabled;
+                SetAutomationEnabled(
+                    triggerLimit,
+                    persistedSettings.IsAutomationEnabled(triggerLimit));
                 return false;
             }
 
@@ -426,13 +505,14 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             {
                 var updatedSettings = await monitor.SetAutomationEnabledAsync(
                     settingsUpdateService,
+                    triggerLimit,
                     enabled,
                     CancellationToken.None);
                 MergeFreshPersistedSettings(baselineSettings, updatedSettings);
-                AutomationEnabled = updatedSettings.AutomationEnabled;
-                SaveStatus = enabled
-                    ? "초기화권 자동 사용을 켰습니다."
-                    : "초기화권 자동 사용을 껐습니다.";
+                SetAutomationEnabled(
+                    triggerLimit,
+                    updatedSettings.IsAutomationEnabled(triggerLimit));
+                SaveStatus = string.Empty;
                 return true;
             }
             catch (SettingsException exception)
@@ -451,7 +531,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                 SaveStatus = "예상하지 못한 로컬 오류로 초기화권 자동 사용 설정을 적용하지 않았습니다.";
             }
 
-            AutomationEnabled = persistedSettings.AutomationEnabled;
+            SetAutomationEnabled(
+                triggerLimit,
+                persistedSettings.IsAutomationEnabled(triggerLimit));
             return false;
         }
         finally
@@ -486,9 +568,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                     CancellationToken.None);
                 MergeFreshPersistedSettings(baselineSettings, updatedSettings);
                 NotifyOnUsageReset = updatedSettings.NotifyOnUsageReset;
-                SaveStatus = enabled
-                    ? "사용량 초기화 알림을 켰습니다."
-                    : "사용량 초기화 알림을 껐습니다.";
+                SaveStatus = string.Empty;
                 return true;
             }
             catch (SettingsException exception)
@@ -516,41 +596,66 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
     }
 
-    public bool RequiresThresholdChangeConfirmation()
+    public bool RequiresThresholdChangeConfirmation() =>
+        RequiresThresholdChangeConfirmation(TriggerLimit.Weekly);
+
+    public bool RequiresFiveHourThresholdChangeConfirmation() =>
+        RequiresThresholdChangeConfirmation(TriggerLimit.FiveHour);
+
+    private bool RequiresThresholdChangeConfirmation(TriggerLimit triggerLimit)
     {
         return int.TryParse(
-                ThresholdText,
+                GetThresholdText(triggerLimit),
                 NumberStyles.None,
                 CultureInfo.InvariantCulture,
                 out var threshold)
             && threshold >= GuardSettings.MinimumThreshold
             && threshold <= GuardSettings.MaximumThreshold
-            && IsPotentialImmediateResetThreshold(
-                threshold,
-                AutomationEnabled);
+            && IsPotentialImmediateResetThreshold(triggerLimit, threshold);
     }
 
-    public void CancelThresholdChange()
+    public void CancelThresholdChange() =>
+        CancelThresholdChange(TriggerLimit.Weekly);
+
+    public void CancelFiveHourThresholdChange() =>
+        CancelThresholdChange(TriggerLimit.FiveHour);
+
+    private void CancelThresholdChange(TriggerLimit triggerLimit)
     {
-        ThresholdText = persistedSettings.RemainingThresholdPercent.ToString(
-            CultureInfo.InvariantCulture);
+        SetThresholdText(
+            triggerLimit,
+            FormatThreshold(
+                persistedSettings.GetRemainingThresholdPercent(
+                    triggerLimit)));
         SaveStatus = "잔여량 임계값을 변경하지 않았습니다.";
     }
 
     public async Task<bool> SaveThresholdAsync(
-        bool immediateResetRiskConfirmed = false)
+        bool immediateResetRiskConfirmed = false) =>
+        await SaveThresholdAsync(
+            TriggerLimit.Weekly,
+            immediateResetRiskConfirmed);
+
+    public async Task<bool> SaveFiveHourThresholdAsync(
+        bool immediateResetRiskConfirmed = false) =>
+        await SaveThresholdAsync(
+            TriggerLimit.FiveHour,
+            immediateResetRiskConfirmed);
+
+    private async Task<bool> SaveThresholdAsync(
+        TriggerLimit triggerLimit,
+        bool immediateResetRiskConfirmed)
     {
-        var requestedText = ThresholdText;
-        if (!int.TryParse(
+        var requestedText = GetThresholdText(triggerLimit);
+        if (!TryParseThreshold(
                 requestedText,
-                NumberStyles.None,
-                CultureInfo.InvariantCulture,
-                out var threshold)
-            || threshold < GuardSettings.MinimumThreshold
-            || threshold > GuardSettings.MaximumThreshold)
+                allowEmpty: true,
+                out var threshold))
         {
             SaveStatus =
-                $"잔여량 임계값은 {GuardSettings.MinimumThreshold}~{GuardSettings.MaximumThreshold}%의 정수로 입력하세요.";
+                triggerLimit == TriggerLimit.FiveHour
+                    ? $"5시간 잔여량 임계값은 공란 또는 {GuardSettings.MinimumThreshold}~{GuardSettings.MaximumThreshold}%의 정수로 입력하세요."
+                    : $"주간 잔여량 임계값은 공란 또는 {GuardSettings.MinimumThreshold}~{GuardSettings.MaximumThreshold}%의 정수로 입력하세요.";
             return false;
         }
 
@@ -567,20 +672,22 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                 return false;
             }
 
-            if (threshold == persistedSettings.RemainingThresholdPercent)
+            if (threshold
+                == persistedSettings.GetRemainingThresholdPercent(triggerLimit))
             {
                 return true;
             }
 
-            if (IsPotentialImmediateResetThreshold(
-                    threshold,
-                    persistedSettings.AutomationEnabled)
+            if (threshold is { } requestedThreshold
+                && IsPotentialImmediateResetThreshold(
+                    triggerLimit,
+                    requestedThreshold)
                 && !immediateResetRiskConfirmed)
             {
                 SaveStatus = "이 임계값을 적용하면 초기화권이 바로 사용될 수 있어 확인이 필요합니다.";
-                RestoreNumericTextAfterFailedSave(
-                    requestedText,
-                    isThreshold: true);
+                RestoreThresholdTextAfterFailedSave(
+                    triggerLimit,
+                    requestedText);
                 return false;
             }
 
@@ -590,13 +697,26 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                 var updatedSettings =
                     await monitor.SetRemainingThresholdPercentAsync(
                         settingsUpdateService,
+                        triggerLimit,
                         threshold,
                         CancellationToken.None);
                 MergeFreshPersistedSettings(
                     baselineSettings,
                     updatedSettings,
-                    expectedThresholdText: requestedText);
-                SaveStatus = $"잔여량 임계값을 {threshold}%로 적용했습니다.";
+                    expectedThresholdText:
+                        triggerLimit == TriggerLimit.Weekly
+                            ? requestedText
+                            : null,
+                    expectedFiveHourThresholdText:
+                        triggerLimit == TriggerLimit.FiveHour
+                            ? requestedText
+                            : null);
+                var limitLabel = triggerLimit == TriggerLimit.FiveHour
+                    ? "5시간 한도"
+                    : "주간 한도";
+                SaveStatus = threshold is { } savedThreshold
+                    ? $"{limitLabel} 잔여량 임계값을 {savedThreshold}%로 적용했습니다."
+                    : string.Empty;
                 return true;
             }
             catch (SettingsException exception)
@@ -615,9 +735,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                 SaveStatus = "예상하지 못한 로컬 오류로 잔여량 임계값을 적용하지 않았습니다.";
             }
 
-            RestoreNumericTextAfterFailedSave(
-                requestedText,
-                isThreshold: true);
+            RestoreThresholdTextAfterFailedSave(
+                triggerLimit,
+                requestedText);
             return false;
         }
         finally
@@ -719,34 +839,41 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             }
 
             SaveStatus = string.Empty;
-            if (RequiresAutomationEnableConfirmation && !automationEnableConfirmed)
+            if ((RequiresAutomationEnableConfirmation
+                    || RequiresFiveHourAutomationEnableConfirmation)
+                && !automationEnableConfirmed)
             {
                 SaveStatus = "초기화권 자동 사용을 켜려면 초기화권 사용 가능성을 확인해야 합니다.";
                 return;
             }
 
-            if (!int.TryParse(
+            if (!TryParseThreshold(
                     ThresholdText,
-                    NumberStyles.None,
-                    CultureInfo.InvariantCulture,
-                    out var threshold)
-                || !int.TryParse(
-                    PollIntervalText,
-                    NumberStyles.None,
-                    CultureInfo.InvariantCulture,
-                    out var pollInterval))
+                    allowEmpty: true,
+                    out var weeklyThreshold)
+                || !TryParseThreshold(
+                    FiveHourThresholdText,
+                    allowEmpty: true,
+                    out var fiveHourThreshold))
             {
-                SaveStatus = "임계값과 조회 주기는 정수로 입력하세요.";
+                SaveStatus =
+                    $"주간·5시간 임계값은 공란 또는 {GuardSettings.MinimumThreshold}~{GuardSettings.MaximumThreshold}% 정수로 입력하세요.";
                 return;
             }
 
             var settings = persistedSettings with
             {
-                RemainingThresholdPercent = threshold,
-                PollIntervalMinutes = pollInterval,
+                RemainingThresholdPercent = weeklyThreshold,
+                FiveHourRemainingThresholdPercent = fiveHourThreshold,
+                PollIntervalMinutes = GuardSettings.FixedPollIntervalMinutes,
                 StartWithWindows = StartWithWindows,
                 CodexExecutablePath = codexExecutablePath,
-                AutomationEnabled = AutomationEnabled,
+                AutomationEnabled =
+                    weeklyThreshold.HasValue
+                    && AutomationEnabled,
+                FiveHourAutomationEnabled =
+                    fiveHourThreshold.HasValue
+                    && FiveHourAutomationEnabled,
                 NotifyOnUsageReset = NotifyOnUsageReset,
             };
 
@@ -843,7 +970,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                     CancellationToken.None);
                 MergeFreshPersistedSettings(baselineSettings, updatedSettings);
                 TryRefreshStartupState();
-                SaveStatus = "자동 시작 설정을 저장했습니다.";
+                SaveStatus = string.Empty;
             }
             catch (SettingsConflictException exception)
             {
@@ -910,7 +1037,16 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     public void CancelAutomationEnable()
     {
-        AutomationEnabled = persistedSettings.AutomationEnabled;
+        AutomationEnabled =
+            persistedSettings.IsAutomationEnabled(TriggerLimit.Weekly);
+        SaveStatus = "초기화권 자동 사용을 켜지 않았습니다.";
+    }
+
+    public void CancelFiveHourAutomationEnable()
+    {
+        FiveHourAutomationEnabled =
+            persistedSettings.IsAutomationEnabled(
+                TriggerLimit.FiveHour);
         SaveStatus = "초기화권 자동 사용을 켜지 않았습니다.";
     }
 
@@ -930,14 +1066,41 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     {
         currentSnapshot = snapshot;
         WeeklyRemainingText = snapshot.Weekly is null
-            ? "—"
+            ? "-"
             : $"{snapshot.Weekly.RemainingPercent:F0}%";
         WeeklyRemainingPercent = snapshot.Weekly is null
             ? 0
             : Math.Clamp(snapshot.Weekly.RemainingPercent, 0, 100);
         WeeklyResetStatus = FormatReset(snapshot.Weekly);
+        if (snapshot.FiveHour is not null)
+        {
+            FiveHourRemainingText =
+                $"{snapshot.FiveHour.RemainingPercent:F0}%";
+            FiveHourRemainingPercent =
+                Math.Clamp(snapshot.FiveHour.RemainingPercent, 0, 100);
+            FiveHourResetStatus = FormatReset(snapshot.FiveHour);
+        }
+        else if (snapshot.IsFailure
+            || IsCompatibilityWarningState(snapshot.CompatibilityState))
+        {
+            FiveHourRemainingText = "-";
+            FiveHourRemainingPercent = 0;
+            FiveHourResetStatus = "다음 갱신 예정 · -";
+        }
+        else if (snapshot.LastSuccessfulObservationAt is not null)
+        {
+            FiveHourRemainingText = "-";
+            FiveHourRemainingPercent = 0;
+            FiveHourResetStatus = "다음 갱신 예정 · -";
+        }
+        else
+        {
+            FiveHourRemainingText = "-";
+            FiveHourRemainingPercent = 0;
+            FiveHourResetStatus = "다음 갱신 예정 · -";
+        }
         CreditStatus = snapshot.AvailableCreditCount?.ToString(
-            CultureInfo.InvariantCulture) ?? "알 수 없음";
+            CultureInfo.InvariantCulture) ?? "-";
         LastCheckedStatus = snapshot.LastSuccessfulObservationAt is { } lastSuccess
             ? lastSuccess.ToLocalTime().ToString("g", CultureInfo.CurrentCulture)
             : "확인 전";
@@ -952,14 +1115,21 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private void ApplyPersistedSettings(GuardSettings settings)
     {
         persistedSettings = settings;
-        ThresholdText = settings.RemainingThresholdPercent.ToString(
-            CultureInfo.InvariantCulture);
+        ThresholdText = FormatThreshold(
+            settings.RemainingThresholdPercent);
+        FiveHourThresholdText = FormatThreshold(
+            settings.FiveHourRemainingThresholdPercent);
         PollIntervalText = settings.PollIntervalMinutes.ToString(
             CultureInfo.InvariantCulture);
         SetCodexExecutablePath(settings.CodexExecutablePath);
-        AutomationEnabled = settings.AutomationEnabled;
+        AutomationEnabled =
+            settings.IsAutomationEnabled(TriggerLimit.Weekly);
+        FiveHourAutomationEnabled =
+            settings.IsAutomationEnabled(TriggerLimit.FiveHour);
         NotifyOnUsageReset = settings.NotifyOnUsageReset;
         OnPropertyChanged(nameof(RequiresAutomationEnableConfirmation));
+        OnPropertyChanged(
+            nameof(RequiresFiveHourAutomationEnableConfirmation));
         TryRefreshStartupState();
         monitor.RequestRefresh();
     }
@@ -971,34 +1141,33 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     {
         try
         {
-            if (int.TryParse(
+            if (TryParseThreshold(
                     ThresholdText,
-                    NumberStyles.None,
-                    CultureInfo.InvariantCulture,
+                    allowEmpty: true,
                     out var threshold)
-                && threshold >= GuardSettings.MinimumThreshold
-                && threshold <= GuardSettings.MaximumThreshold
                 && threshold != persistedSettings.RemainingThresholdPercent)
             {
                 persistedSettings =
                     await monitor.SetRemainingThresholdPercentAsync(
                         settingsUpdateService,
+                        TriggerLimit.Weekly,
                         threshold,
                         CancellationToken.None);
             }
 
-            if (int.TryParse(
-                    PollIntervalText,
-                    NumberStyles.None,
-                    CultureInfo.InvariantCulture,
-                    out var pollInterval)
-                && pollInterval is >= 1 and <= 60
-                && pollInterval != persistedSettings.PollIntervalMinutes)
+            if (TryParseThreshold(
+                    FiveHourThresholdText,
+                    allowEmpty: true,
+                    out var fiveHourThreshold)
+                && fiveHourThreshold
+                    != persistedSettings.FiveHourRemainingThresholdPercent)
             {
-                persistedSettings = await monitor.SetPollIntervalMinutesAsync(
-                    settingsUpdateService,
-                    pollInterval,
-                    CancellationToken.None);
+                persistedSettings =
+                    await monitor.SetRemainingThresholdPercentAsync(
+                        settingsUpdateService,
+                        TriggerLimit.FiveHour,
+                        fiveHourThreshold,
+                        CancellationToken.None);
             }
         }
         catch (Exception exception) when (exception is not (
@@ -1016,8 +1185,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         {
             if (string.Equals(ThresholdText, requestedText, StringComparison.Ordinal))
             {
-                ThresholdText = persistedSettings.RemainingThresholdPercent.ToString(
-                    CultureInfo.InvariantCulture);
+                ThresholdText = FormatThreshold(
+                    persistedSettings.RemainingThresholdPercent);
             }
 
             return;
@@ -1030,6 +1199,23 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
     }
 
+    private void RestoreThresholdTextAfterFailedSave(
+        TriggerLimit triggerLimit,
+        string requestedText)
+    {
+        if (string.Equals(
+            GetThresholdText(triggerLimit),
+            requestedText,
+            StringComparison.Ordinal))
+        {
+            SetThresholdText(
+                triggerLimit,
+                FormatThreshold(
+                    persistedSettings.GetRemainingThresholdPercent(
+                        triggerLimit)));
+        }
+    }
+
     private void SetCodexConnectionSaving(bool value)
     {
         if (SetField(ref isCodexConnectionSaving, value))
@@ -1039,29 +1225,44 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     }
 
     private bool IsPotentialImmediateResetThreshold(
-        int requestedThreshold,
-        bool automationWillBeEnabled)
+        TriggerLimit triggerLimit,
+        int requestedThreshold)
     {
-        var weeklyRemaining = CurrentSnapshot.Weekly?.RemainingPercent;
-        return automationWillBeEnabled
+        var remaining = triggerLimit switch
+        {
+            TriggerLimit.Weekly => CurrentSnapshot.Weekly?.RemainingPercent,
+            TriggerLimit.FiveHour => CurrentSnapshot.FiveHour?.RemainingPercent,
+            _ => null,
+        };
+        var persistedThreshold =
+            persistedSettings.GetRemainingThresholdPercent(triggerLimit);
+        return persistedSettings.IsAutomationEnabled(triggerLimit)
+            && persistedThreshold is { } currentThreshold
             && CurrentSnapshot.AvailableCreditCount is > 0
-            && requestedThreshold > persistedSettings.RemainingThresholdPercent
-            && weeklyRemaining is not null
-            && persistedSettings.RemainingThresholdPercent < weeklyRemaining.Value
-            && requestedThreshold >= weeklyRemaining.Value;
+            && requestedThreshold > currentThreshold
+            && remaining is not null
+            && currentThreshold < remaining.Value
+            && requestedThreshold >= remaining.Value;
     }
 
     private void MergeFreshPersistedSettings(
         GuardSettings baselineSettings,
         GuardSettings freshSettings,
         string? expectedThresholdText = null,
+        string? expectedFiveHourThresholdText = null,
         string? expectedPollIntervalText = null)
     {
         var thresholdWasUnedited = string.Equals(
             ThresholdText,
             expectedThresholdText
-                ?? baselineSettings.RemainingThresholdPercent.ToString(
-                    CultureInfo.InvariantCulture),
+                ?? FormatThreshold(
+                    baselineSettings.RemainingThresholdPercent),
+            StringComparison.Ordinal);
+        var fiveHourThresholdWasUnedited = string.Equals(
+            FiveHourThresholdText,
+            expectedFiveHourThresholdText
+                ?? FormatThreshold(
+                    baselineSettings.FiveHourRemainingThresholdPercent),
             StringComparison.Ordinal);
         var pollIntervalWasUnedited = string.Equals(
             PollIntervalText,
@@ -1070,7 +1271,13 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                     CultureInfo.InvariantCulture),
             StringComparison.Ordinal);
         var automationWasUnedited =
-            AutomationEnabled == baselineSettings.AutomationEnabled;
+            AutomationEnabled
+                == baselineSettings.IsAutomationEnabled(
+                    TriggerLimit.Weekly);
+        var fiveHourAutomationWasUnedited =
+            FiveHourAutomationEnabled
+                == baselineSettings.IsAutomationEnabled(
+                    TriggerLimit.FiveHour);
         var notificationWasUnedited =
             NotifyOnUsageReset == baselineSettings.NotifyOnUsageReset;
         var codexExecutableWasUnedited = string.Equals(
@@ -1081,8 +1288,14 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         persistedSettings = freshSettings;
         if (thresholdWasUnedited)
         {
-            ThresholdText = freshSettings.RemainingThresholdPercent.ToString(
-                CultureInfo.InvariantCulture);
+            ThresholdText = FormatThreshold(
+                freshSettings.RemainingThresholdPercent);
+        }
+
+        if (fiveHourThresholdWasUnedited)
+        {
+            FiveHourThresholdText = FormatThreshold(
+                freshSettings.FiveHourRemainingThresholdPercent);
         }
 
         if (pollIntervalWasUnedited)
@@ -1093,7 +1306,15 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
         if (automationWasUnedited)
         {
-            AutomationEnabled = freshSettings.AutomationEnabled;
+            AutomationEnabled =
+                freshSettings.IsAutomationEnabled(TriggerLimit.Weekly);
+        }
+
+        if (fiveHourAutomationWasUnedited)
+        {
+            FiveHourAutomationEnabled =
+                freshSettings.IsAutomationEnabled(
+                    TriggerLimit.FiveHour);
         }
 
         if (notificationWasUnedited)
@@ -1107,6 +1328,54 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
 
         OnPropertyChanged(nameof(RequiresAutomationEnableConfirmation));
+        OnPropertyChanged(
+            nameof(RequiresFiveHourAutomationEnableConfirmation));
+    }
+
+    private string GetThresholdText(TriggerLimit triggerLimit) =>
+        triggerLimit switch
+        {
+            TriggerLimit.Weekly => ThresholdText,
+            TriggerLimit.FiveHour => FiveHourThresholdText,
+            _ => throw new ArgumentOutOfRangeException(nameof(triggerLimit)),
+        };
+
+    private void SetThresholdText(
+        TriggerLimit triggerLimit,
+        string value)
+    {
+        if (triggerLimit == TriggerLimit.Weekly)
+        {
+            ThresholdText = value;
+            return;
+        }
+
+        if (triggerLimit == TriggerLimit.FiveHour)
+        {
+            FiveHourThresholdText = value;
+            return;
+        }
+
+        throw new ArgumentOutOfRangeException(nameof(triggerLimit));
+    }
+
+    private void SetAutomationEnabled(
+        TriggerLimit triggerLimit,
+        bool enabled)
+    {
+        if (triggerLimit == TriggerLimit.Weekly)
+        {
+            AutomationEnabled = enabled;
+            return;
+        }
+
+        if (triggerLimit == TriggerLimit.FiveHour)
+        {
+            FiveHourAutomationEnabled = enabled;
+            return;
+        }
+
+        throw new ArgumentOutOfRangeException(nameof(triggerLimit));
     }
 
     private void RefreshStartupState()
@@ -1149,7 +1418,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     {
         if (reading is null)
         {
-            return "주간 한도 정보를 확인할 수 없습니다.";
+            return "다음 갱신 예정 · -";
         }
 
         var resetAt = DateTimeOffset.FromUnixTimeSeconds(reading.ResetsAt)
@@ -1165,9 +1434,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             CodexCompatibilityState.VerificationPending =>
                 "Codex 응답을 다시 확인하고 있습니다. 안전을 위해 이번 자동 초기화는 실행하지 않습니다.",
             CodexCompatibilityState.ReadUnsupported =>
-                "Codex 응답을 이 버전의 CodexAutoReset이 안전하게 해석할 수 없습니다. 주간 사용량 확인과 초기화권 자동 사용을 중단했습니다. CodexAutoReset 업데이트를 확인해 주세요.",
+                "Codex 응답을 이 버전의 CodexAutoReset이 안전하게 해석할 수 없습니다. 사용량 확인과 초기화권 자동 사용을 중단했습니다. CodexAutoReset 업데이트를 확인해 주세요.",
             CodexCompatibilityState.MutationUnverified =>
-                "주간 사용량은 정상적으로 확인되지만, 현재 Codex 버전의 초기화권 처리 형식은 검증되지 않았습니다. 안전을 위해 초기화권 자동 사용을 중단했습니다. CodexAutoReset 업데이트를 확인해 주세요.",
+                "사용량은 정상적으로 확인되지만, 현재 Codex 버전의 초기화권 처리 형식은 검증되지 않았습니다. 안전을 위해 초기화권 자동 사용을 중단했습니다. CodexAutoReset 업데이트를 확인해 주세요.",
             _ => null,
         };
         if (compatibilityStatus is not null)
@@ -1185,7 +1454,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         var safetyStatus = snapshot.StatusCode switch
         {
             "live_recovery_pending" =>
-                "초기화권 사용 후 주간 잔여량 회복을 확인하고 있습니다. 확인 전에는 추가 초기화권을 사용하지 않습니다.",
+                "초기화권 사용 후 설정한 한도들의 잔여량 회복을 확인하고 있습니다. 확인 전에는 추가 초기화권을 사용하지 않습니다.",
             "usage_reset_settling" =>
                 "사용량 초기화를 감지했습니다. 최신 잔여량이 안정적으로 반영될 때까지 초기화권 자동 사용을 잠시 보류합니다.",
             "usage_reset_state_unavailable" =>
@@ -1225,7 +1494,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
         return snapshot.StatusCode switch
         {
-            "duplicate_suppressed" => "이 주간 사용량 구간은 이미 처리했습니다.",
+            "duplicate_suppressed" => "이 사용량 한도 구간은 이미 처리했습니다.",
             _ => string.Empty,
         };
     }
@@ -1245,6 +1514,37 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             CodexCompatibilityState.VerificationPending
             or CodexCompatibilityState.ReadUnsupported
             or CodexCompatibilityState.MutationUnverified;
+
+    private static string FormatThreshold(int? threshold) =>
+        threshold?.ToString(CultureInfo.InvariantCulture)
+        ?? string.Empty;
+
+    private static bool TryParseThreshold(
+        string text,
+        bool allowEmpty,
+        out int? threshold)
+    {
+        if (allowEmpty && string.IsNullOrWhiteSpace(text))
+        {
+            threshold = null;
+            return true;
+        }
+
+        if (int.TryParse(
+                text,
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out var parsed)
+            && parsed >= GuardSettings.MinimumThreshold
+            && parsed <= GuardSettings.MaximumThreshold)
+        {
+            threshold = parsed;
+            return true;
+        }
+
+        threshold = null;
+        return false;
+    }
 
     private static string ToFriendlySettingsFailure(string code) => code switch
     {

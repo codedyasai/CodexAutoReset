@@ -12,9 +12,10 @@ public partial class MainWindow : Window
 {
     private readonly MainWindowViewModel viewModel;
     private readonly Func<bool, Task>? usageResetNotificationSettingChanged;
-    private readonly DispatcherTimer thresholdSaveTimer;
-    private readonly DispatcherTimer pollIntervalSaveTimer;
-    private bool thresholdSaveInProgress;
+    private readonly DispatcherTimer weeklyThresholdSaveTimer;
+    private readonly DispatcherTimer fiveHourThresholdSaveTimer;
+    private bool weeklyThresholdSaveInProgress;
+    private bool fiveHourThresholdSaveInProgress;
     private bool allowClose;
 
     public MainWindow(
@@ -27,18 +28,18 @@ public partial class MainWindow : Window
             usageResetNotificationSettingChanged;
         DataContext = viewModel;
 
-        thresholdSaveTimer = new DispatcherTimer(
+        weeklyThresholdSaveTimer = new DispatcherTimer(
             TimeSpan.FromMilliseconds(650),
             DispatcherPriority.Background,
-            OnThresholdSaveTimerTick,
+            OnWeeklyThresholdSaveTimerTick,
             Dispatcher);
-        thresholdSaveTimer.Stop();
-        pollIntervalSaveTimer = new DispatcherTimer(
+        weeklyThresholdSaveTimer.Stop();
+        fiveHourThresholdSaveTimer = new DispatcherTimer(
             TimeSpan.FromMilliseconds(650),
             DispatcherPriority.Background,
-            OnPollIntervalSaveTimerTick,
+            OnFiveHourThresholdSaveTimerTick,
             Dispatcher);
-        pollIntervalSaveTimer.Stop();
+        fiveHourThresholdSaveTimer.Stop();
     }
 
     public void ShowAndActivate()
@@ -54,8 +55,8 @@ public partial class MainWindow : Window
 
     public void CloseForExit()
     {
-        thresholdSaveTimer.Stop();
-        pollIntervalSaveTimer.Stop();
+        weeklyThresholdSaveTimer.Stop();
+        fiveHourThresholdSaveTimer.Stop();
         allowClose = true;
         Close();
     }
@@ -71,43 +72,83 @@ public partial class MainWindow : Window
         Hide();
     }
 
-    private async void OnAutomationToggleClick(
+    private void OnWindowPreviewMouseDown(
         object sender,
-        RoutedEventArgs eventArgs)
+        MouseButtonEventArgs eventArgs)
     {
-        var toggle = (System.Windows.Controls.CheckBox)sender;
-        var enabled = toggle.IsChecked == true;
-        var automationEnableConfirmed = false;
-        if (enabled && viewModel.RequiresAutomationEnableConfirmation)
+        if (Keyboard.FocusedElement
+                is not System.Windows.Controls.TextBox focusedTextBox
+            || eventArgs.OriginalSource is not DependencyObject clickedElement
+            || FindVisualAncestor<System.Windows.Controls.TextBox>(
+                clickedElement) is not null)
         {
-            var result = System.Windows.MessageBox.Show(
-                this,
-                "초기화권 자동 사용을 켜면 현재 주간 잔여량이 임계값 이하인 경우 "
-                    + "설정을 저장한 직후 초기화권 1개가 사용될 수 있습니다.\n\n"
-                    + "초기화권 자동 사용을 켜시겠습니까?",
-                "초기화권 자동 사용 켜기",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Warning,
-                MessageBoxResult.No);
-            if (result != MessageBoxResult.Yes)
-            {
-                viewModel.CancelAutomationEnable();
-                toggle.IsChecked = viewModel.AutomationEnabled;
-                return;
-            }
-
-            automationEnableConfirmed = true;
+            return;
         }
 
-        await viewModel.SetAutomationEnabledAsync(
-            enabled,
-            automationEnableConfirmed);
+        var focusScope = FocusManager.GetFocusScope(focusedTextBox);
+        FocusManager.SetFocusedElement(focusScope, null);
+        Keyboard.ClearFocus();
+    }
+
+    private static TElement? FindVisualAncestor<TElement>(
+        DependencyObject element)
+        where TElement : DependencyObject
+    {
+        DependencyObject? current = element;
+        while (current is not null)
+        {
+            if (current is TElement match)
+            {
+                return match;
+            }
+
+            current = current is System.Windows.Media.Visual
+                or System.Windows.Media.Media3D.Visual3D
+                ? System.Windows.Media.VisualTreeHelper.GetParent(current)
+                : LogicalTreeHelper.GetParent(current);
+        }
+
+        return null;
+    }
+
+    private async void OnWeeklyAutomationToggleClick(
+        object sender,
+        RoutedEventArgs eventArgs) =>
+        await HandleAutomationToggleAsync(
+            (System.Windows.Controls.CheckBox)sender,
+            isFiveHour: false);
+
+    private async void OnFiveHourAutomationToggleClick(
+        object sender,
+        RoutedEventArgs eventArgs) =>
+        await HandleAutomationToggleAsync(
+            (System.Windows.Controls.CheckBox)sender,
+            isFiveHour: true);
+
+    private async Task HandleAutomationToggleAsync(
+        System.Windows.Controls.CheckBox toggle,
+        bool isFiveHour)
+    {
+        var enabled = toggle.IsChecked == true;
+
+        if (isFiveHour)
+        {
+            await viewModel.SetFiveHourAutomationEnabledAsync(
+                enabled,
+                automationEnableConfirmed: enabled);
+        }
+        else
+        {
+            await viewModel.SetAutomationEnabledAsync(
+                enabled,
+                automationEnableConfirmed: enabled);
+        }
     }
 
     private async void OnRefreshClick(object sender, RoutedEventArgs eventArgs) =>
         await viewModel.RefreshNowAsync();
 
-    private void OnThresholdTextChanged(
+    private void OnWeeklyThresholdTextChanged(
         object sender,
         TextChangedEventArgs eventArgs)
     {
@@ -116,11 +157,11 @@ public partial class MainWindow : Window
             return;
         }
 
-        thresholdSaveTimer.Stop();
-        thresholdSaveTimer.Start();
+        weeklyThresholdSaveTimer.Stop();
+        weeklyThresholdSaveTimer.Start();
     }
 
-    private void OnPollIntervalTextChanged(
+    private void OnFiveHourThresholdTextChanged(
         object sender,
         TextChangedEventArgs eventArgs)
     {
@@ -129,23 +170,23 @@ public partial class MainWindow : Window
             return;
         }
 
-        pollIntervalSaveTimer.Stop();
-        pollIntervalSaveTimer.Start();
+        fiveHourThresholdSaveTimer.Stop();
+        fiveHourThresholdSaveTimer.Start();
     }
 
     private async void OnNumericInputLostKeyboardFocus(
         object sender,
         KeyboardFocusChangedEventArgs eventArgs)
     {
-        if (ReferenceEquals(sender, ThresholdInput))
+        if (ReferenceEquals(sender, WeeklyThresholdInput))
         {
-            thresholdSaveTimer.Stop();
-            await SaveThresholdFromUiAsync();
+            weeklyThresholdSaveTimer.Stop();
+            await SaveThresholdFromUiAsync(isFiveHour: false);
             return;
         }
 
-        pollIntervalSaveTimer.Stop();
-        await viewModel.SavePollIntervalAsync();
+        fiveHourThresholdSaveTimer.Stop();
+        await SaveThresholdFromUiAsync(isFiveHour: true);
     }
 
     private async void OnNumericInputKeyDown(
@@ -158,31 +199,31 @@ public partial class MainWindow : Window
         }
 
         eventArgs.Handled = true;
-        if (ReferenceEquals(sender, ThresholdInput))
+        if (ReferenceEquals(sender, WeeklyThresholdInput))
         {
-            thresholdSaveTimer.Stop();
-            await SaveThresholdFromUiAsync();
+            weeklyThresholdSaveTimer.Stop();
+            await SaveThresholdFromUiAsync(isFiveHour: false);
             return;
         }
 
-        pollIntervalSaveTimer.Stop();
-        await viewModel.SavePollIntervalAsync();
+        fiveHourThresholdSaveTimer.Stop();
+        await SaveThresholdFromUiAsync(isFiveHour: true);
     }
 
-    private async void OnThresholdSaveTimerTick(
+    private async void OnWeeklyThresholdSaveTimerTick(
         object? sender,
         EventArgs eventArgs)
     {
-        thresholdSaveTimer.Stop();
-        await SaveThresholdFromUiAsync();
+        weeklyThresholdSaveTimer.Stop();
+        await SaveThresholdFromUiAsync(isFiveHour: false);
     }
 
-    private async void OnPollIntervalSaveTimerTick(
+    private async void OnFiveHourThresholdSaveTimerTick(
         object? sender,
         EventArgs eventArgs)
     {
-        pollIntervalSaveTimer.Stop();
-        await viewModel.SavePollIntervalAsync();
+        fiveHourThresholdSaveTimer.Stop();
+        await SaveThresholdFromUiAsync(isFiveHour: true);
     }
 
     private async void OnStartWithWindowsClick(
@@ -206,23 +247,40 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task SaveThresholdFromUiAsync()
+    private async Task SaveThresholdFromUiAsync(bool isFiveHour)
     {
-        if (thresholdSaveInProgress)
+        if (isFiveHour
+            ? fiveHourThresholdSaveInProgress
+            : weeklyThresholdSaveInProgress)
         {
             return;
         }
 
-        thresholdSaveInProgress = true;
+        if (isFiveHour)
+        {
+            fiveHourThresholdSaveInProgress = true;
+        }
+        else
+        {
+            weeklyThresholdSaveInProgress = true;
+        }
+
         try
         {
             var immediateResetRiskConfirmed = false;
-            if (viewModel.RequiresThresholdChangeConfirmation())
+            var requiresConfirmation = isFiveHour
+                ? viewModel.RequiresFiveHourThresholdChangeConfirmation()
+                : viewModel.RequiresThresholdChangeConfirmation();
+            if (requiresConfirmation)
             {
+                var limitLabel = isFiveHour
+                    ? "5시간 한도"
+                    : "주간 한도";
                 var result = System.Windows.MessageBox.Show(
                     this,
-                    "이 임계값을 적용하면 현재 주간 잔여량이 조건에 들어가 "
+                    $"이 임계값을 적용하면 현재 {limitLabel} 잔여량이 조건에 들어가 "
                         + "초기화권 1개가 바로 사용될 수 있습니다.\n\n"
+                        + "Codex 서버가 현재 초기화 가능한 한도들을 결정합니다. "
                         + "임계값을 적용하시겠습니까?",
                     "잔여량 임계값 변경",
                     MessageBoxButton.YesNo,
@@ -230,18 +288,42 @@ public partial class MainWindow : Window
                     MessageBoxResult.No);
                 if (result != MessageBoxResult.Yes)
                 {
-                    viewModel.CancelThresholdChange();
+                    if (isFiveHour)
+                    {
+                        viewModel.CancelFiveHourThresholdChange();
+                    }
+                    else
+                    {
+                        viewModel.CancelThresholdChange();
+                    }
+
                     return;
                 }
 
                 immediateResetRiskConfirmed = true;
             }
 
-            await viewModel.SaveThresholdAsync(immediateResetRiskConfirmed);
+            if (isFiveHour)
+            {
+                await viewModel.SaveFiveHourThresholdAsync(
+                    immediateResetRiskConfirmed);
+            }
+            else
+            {
+                await viewModel.SaveThresholdAsync(
+                    immediateResetRiskConfirmed);
+            }
         }
         finally
         {
-            thresholdSaveInProgress = false;
+            if (isFiveHour)
+            {
+                fiveHourThresholdSaveInProgress = false;
+            }
+            else
+            {
+                weeklyThresholdSaveInProgress = false;
+            }
         }
     }
 

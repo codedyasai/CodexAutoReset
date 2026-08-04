@@ -15,6 +15,87 @@
         TextOptions.TextFormattingMode="Display"
         PreviewMouseDown="OnWindowPreviewMouseDown"
         Closing="OnClosing">
+    <Window.Resources>
+        <Style x:Key="HeaderPinToggleStyle" TargetType="ToggleButton">
+            <Setter Property="Width" Value="42" />
+            <Setter Property="Height" Value="42" />
+            <Setter Property="Margin" Value="16,0,0,0" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}" />
+            <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FocusVisualStyle" Value="{StaticResource KeyboardFocusVisual}" />
+            <Setter Property="ToolTip" Value="창을 항상 위에 고정" />
+            <Setter Property="AutomationProperties.Name" Value="창을 항상 위에 고정" />
+            <Setter Property="AutomationProperties.HelpText"
+                    Value="켜면 이 창이 다른 창 뒤로 넘어가지 않습니다." />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="PinButtonBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="10">
+                            <TextBlock x:Name="PinGlyph"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       FontFamily="Segoe MDL2 Assets"
+                                       FontSize="18"
+                                       Foreground="{TemplateBinding Foreground}"
+                                       Text="&#xE718;" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="PinButtonBorder"
+                                        Property="Background"
+                                        Value="#F0ECE5" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="PinButtonBorder"
+                                        Property="Opacity"
+                                        Value="0.72" />
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="PinButtonBorder"
+                                        Property="Background"
+                                        Value="{StaticResource PrimaryTextBrush}" />
+                                <Setter TargetName="PinButtonBorder"
+                                        Property="BorderBrush"
+                                        Value="{StaticResource PrimaryTextBrush}" />
+                                <Setter TargetName="PinGlyph"
+                                        Property="Foreground"
+                                        Value="#FFFFFF" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="PinButtonBorder"
+                                        Property="BorderBrush"
+                                        Value="#1A1C1F" />
+                                <Setter TargetName="PinButtonBorder"
+                                        Property="BorderThickness"
+                                        Value="2" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.48" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsChecked" Value="True">
+                    <Setter Property="ToolTip" Value="창 고정 해제" />
+                    <Setter Property="AutomationProperties.Name"
+                            Value="창 고정 해제" />
+                    <Setter Property="AutomationProperties.ItemStatus"
+                            Value="고정됨" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+
     <Grid Background="{StaticResource AppBackgroundBrush}">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -30,6 +111,7 @@
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
 
                 <Image Width="126"
@@ -44,6 +126,13 @@
                     <TextBlock Style="{StaticResource CaptionTextStyle}"
                                Text="주간·5시간 사용량과 초기화권을 한곳에서 관리합니다." />
                 </StackPanel>
+
+                <ToggleButton x:Name="AlwaysOnTopToggle"
+                              Grid.Column="2"
+                              Style="{StaticResource HeaderPinToggleStyle}"
+                              IsChecked="{Binding Topmost,
+                                  RelativeSource={RelativeSource AncestorType={x:Type Window}},
+                                  Mode=TwoWay}" />
             </Grid>
         </Border>
 

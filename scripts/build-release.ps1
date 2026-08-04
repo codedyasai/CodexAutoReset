@@ -2,7 +2,7 @@
 param(
     [Parameter()]
     [ValidatePattern('^\d+\.\d+\.\d+$')]
-    [string]$Version = '0.3.5',
+    [string]$Version = '0.3.6',
 
     [Parameter()]
     [string]$InnoCompilerPath

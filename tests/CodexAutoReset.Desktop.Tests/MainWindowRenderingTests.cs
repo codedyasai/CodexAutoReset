@@ -3,6 +3,7 @@ using System.Runtime.ExceptionServices;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -76,6 +77,8 @@ public sealed class MainWindowRenderingTests
                 var overallStatusBody =
                     (TextBlock)window.FindName("OverallStatusBodyText");
                 var appHeaderGrid = (Grid)window.FindName("AppHeaderGrid");
+                var alwaysOnTopToggle =
+                    (ToggleButton)window.FindName("AlwaysOnTopToggle");
                 var codexConnectionPathBox =
                     (Border)window.FindName("CodexConnectionPathBox");
                 var codexConnectionPathPanel =
@@ -158,7 +161,50 @@ public sealed class MainWindowRenderingTests
                     <= usageSummaryGrid.TranslatePoint(
                         new Point(),
                         window).Y);
-                Assert.AreEqual(2, appHeaderGrid.ColumnDefinitions.Count);
+                Assert.AreEqual(3, appHeaderGrid.ColumnDefinitions.Count);
+                Assert.AreEqual(2, Grid.GetColumn(alwaysOnTopToggle));
+                Assert.IsFalse(alwaysOnTopToggle.IsChecked);
+                Assert.IsFalse(window.Topmost);
+                Assert.AreEqual(
+                    "창을 항상 위에 고정",
+                    alwaysOnTopToggle.ToolTip);
+                Assert.AreEqual(
+                    "창을 항상 위에 고정",
+                    AutomationProperties.GetName(alwaysOnTopToggle));
+                Assert.AreEqual(
+                    "켜면 이 창이 다른 창 뒤로 넘어가지 않습니다.",
+                    AutomationProperties.GetHelpText(alwaysOnTopToggle));
+                Assert.AreEqual(
+                    "\uE718",
+                    ((TextBlock)alwaysOnTopToggle.Template.FindName(
+                        "PinGlyph",
+                        alwaysOnTopToggle)).Text);
+                Assert.IsTrue(
+                    alwaysOnTopToggle.TranslatePoint(
+                        new Point(alwaysOnTopToggle.ActualWidth, 0),
+                        appHeaderGrid).X
+                    <= appHeaderGrid.ActualWidth + 0.5);
+
+                alwaysOnTopToggle.IsChecked = true;
+                window.UpdateLayout();
+                Assert.IsTrue(window.Topmost);
+                Assert.AreEqual("창 고정 해제", alwaysOnTopToggle.ToolTip);
+                Assert.AreEqual(
+                    "창 고정 해제",
+                    AutomationProperties.GetName(alwaysOnTopToggle));
+                Assert.AreEqual(
+                    "고정됨",
+                    AutomationProperties.GetItemStatus(alwaysOnTopToggle));
+
+                window.Hide();
+                window.ShowAndActivate();
+                window.UpdateLayout();
+                Assert.IsTrue(window.Topmost);
+                Assert.IsTrue(alwaysOnTopToggle.IsChecked);
+
+                alwaysOnTopToggle.IsChecked = false;
+                window.UpdateLayout();
+                Assert.IsFalse(window.Topmost);
                 Assert.IsFalse(boundTextPaths.Contains(
                     "AutomationStateText",
                     StringComparer.Ordinal));

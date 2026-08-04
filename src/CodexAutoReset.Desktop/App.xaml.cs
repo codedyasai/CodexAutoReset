@@ -11,6 +11,7 @@ public partial class App : System.Windows.Application
         @"Local\CodexAutoReset-8D5D7C2C-6DE7-4B57-A788-4D8E4680B43B";
 
     private SingleInstanceLease? instanceLease;
+    private SingleInstanceActivationChannel? activationChannel;
     private System.Threading.Mutex? uninstallGuardMutex;
     private GuardMonitorService? monitor;
     private MainWindowViewModel? viewModel;
@@ -51,17 +52,52 @@ public partial class App : System.Windows.Application
             instanceLease = SingleInstanceLease.TryAcquire(paths);
             if (instanceLease is null)
             {
-                if (!arguments.Background)
+                if (arguments.Background)
                 {
-                    System.Windows.MessageBox.Show(
-                        "CodexAutoReset가 이미 실행 중입니다.",
-                        "CodexAutoReset",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Information);
+                    Shutdown(4);
+                    return;
                 }
 
-                Shutdown(4);
-                return;
+                var activationResult = SingleInstanceActivationResult.Unavailable;
+                var activationDeadline = Environment.TickCount64 + 4_000;
+                while (Environment.TickCount64 < activationDeadline)
+                {
+                    activationResult = await SingleInstanceActivationChannel
+                        .TryActivateExistingAsync(
+                            paths,
+                            TimeSpan.FromMilliseconds(750),
+                            CancellationToken.None);
+                    if (activationResult
+                        == SingleInstanceActivationResult.Activated)
+                    {
+                        Shutdown(0);
+                        return;
+                    }
+
+                    instanceLease = SingleInstanceLease.TryAcquire(paths);
+                    if (instanceLease is not null
+                        || activationResult
+                            == SingleInstanceActivationResult.DifferentSession)
+                    {
+                        break;
+                    }
+
+                    await Task.Delay(100);
+                }
+
+                if (instanceLease is null
+                    && activationResult
+                        != SingleInstanceActivationResult.DifferentSession)
+                {
+                    instanceLease = SingleInstanceLease.TryAcquire(paths);
+                }
+
+                if (instanceLease is null)
+                {
+                    ShowExistingInstanceActivationFailure(activationResult);
+                    Shutdown(4);
+                    return;
+                }
             }
 
             uninstallGuardMutex = new System.Threading.Mutex(
@@ -105,6 +141,11 @@ public partial class App : System.Windows.Application
                 viewModel,
                 SetUsageResetNotificationsEnabledAsync);
             MainWindow = window;
+            activationChannel = SingleInstanceActivationChannel.TryStart(paths);
+            activationChannel?.SetActivationHandler(
+                cancellationToken => ActivateMainWindowAsync(
+                    window,
+                    cancellationToken));
 
             var popupPresenter = new NotificationPopupController(
                 window.ShowAndActivate);
@@ -163,6 +204,56 @@ public partial class App : System.Windows.Application
             MessageBoxImage.Error);
     }
 
+    private static void ShowExistingInstanceActivationFailure(
+        SingleInstanceActivationResult activationResult)
+    {
+        var message = activationResult
+            == SingleInstanceActivationResult.DifferentSession
+            ? "CodexAutoReset가 다른 Windows 세션에서 실행 중입니다.\n\n"
+                + "해당 세션에서 앱을 종료한 뒤 다시 실행해 주세요."
+            : "CodexAutoReset은 실행 중이지만 기존 창과 연결하지 못했습니다.\n\n"
+                + "알림 영역에 CodexAutoReset 아이콘이 있으면 더블클릭하고, "
+                + "없으면 잠시 후 다시 실행해 주세요.";
+        System.Windows.MessageBox.Show(
+            message,
+            "CodexAutoReset",
+            MessageBoxButton.OK,
+            MessageBoxImage.Warning);
+    }
+
+    private async Task<bool> ActivateMainWindowAsync(
+        MainWindow window,
+        CancellationToken cancellationToken)
+    {
+        if (stopping || Dispatcher.HasShutdownStarted)
+        {
+            return false;
+        }
+
+        try
+        {
+            return await Dispatcher.InvokeAsync(() =>
+            {
+                if (stopping || Dispatcher.HasShutdownStarted)
+                {
+                    return false;
+                }
+
+                window.ShowAndActivate();
+                usageResetNotificationCoordinator?.BringPendingToFront();
+                return true;
+            }, System.Windows.Threading.DispatcherPriority.Send, cancellationToken);
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+        catch (TaskCanceledException)
+        {
+            return false;
+        }
+    }
+
     private async Task ShutdownSafelyAsync(int exitCode = 0)
     {
         if (stopping)
@@ -171,6 +262,12 @@ public partial class App : System.Windows.Application
         }
 
         stopping = true;
+        if (activationChannel is not null)
+        {
+            await activationChannel.DisposeAsync();
+            activationChannel = null;
+        }
+
         tray?.Dispose();
         tray = null;
 

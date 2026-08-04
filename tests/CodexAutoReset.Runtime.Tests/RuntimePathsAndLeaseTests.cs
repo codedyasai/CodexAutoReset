@@ -59,4 +59,25 @@ public sealed class RuntimePathsAndLeaseTests
             }
         }
     }
+
+    [TestMethod]
+    public void Lease_DoesNotTreatAnInvalidLockTargetAsAnotherInstance()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            $"CodexAutoReset.Runtime.Tests-{Guid.NewGuid():N}");
+        var paths = RuntimePaths.ForTesting(root);
+
+        try
+        {
+            Directory.CreateDirectory(paths.InstanceLockFile);
+
+            Assert.ThrowsException<UnauthorizedAccessException>(
+                () => SingleInstanceLease.TryAcquire(paths));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
 }

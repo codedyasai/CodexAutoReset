@@ -25,11 +25,8 @@ public sealed class SingleInstanceLease : IDisposable
                 FileOptions.None);
             return new SingleInstanceLease(stream);
         }
-        catch (IOException)
-        {
-            return null;
-        }
-        catch (UnauthorizedAccessException)
+        catch (IOException exception) when (
+            (exception.HResult & 0xFFFF) is 32 or 33)
         {
             return null;
         }

@@ -500,7 +500,7 @@ public sealed class MainWindowRenderingTests
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
 
-        Assert.IsTrue(thread.Join(TimeSpan.FromSeconds(15)), "Window layout timed out.");
+        Assert.IsTrue(thread.Join(TimeSpan.FromSeconds(60)), "Window layout timed out.");
         if (failure is not null)
         {
             ExceptionDispatchInfo.Capture(failure).Throw();

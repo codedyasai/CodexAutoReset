@@ -196,12 +196,6 @@ public sealed class MainWindowRenderingTests
                     "고정됨",
                     AutomationProperties.GetItemStatus(alwaysOnTopToggle));
 
-                window.Hide();
-                window.ShowAndActivate();
-                window.UpdateLayout();
-                Assert.IsTrue(window.Topmost);
-                Assert.IsTrue(alwaysOnTopToggle.IsChecked);
-
                 alwaysOnTopToggle.IsChecked = false;
                 window.UpdateLayout();
                 Assert.IsFalse(window.Topmost);

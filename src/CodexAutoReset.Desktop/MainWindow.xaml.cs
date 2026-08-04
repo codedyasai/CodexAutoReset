@@ -148,6 +148,15 @@ public partial class MainWindow : Window
     private async void OnRefreshClick(object sender, RoutedEventArgs eventArgs) =>
         await viewModel.RefreshNowAsync();
 
+    private void OnAlwaysOnTopToggleClick(
+        object sender,
+        RoutedEventArgs eventArgs)
+    {
+        var toggle =
+            (System.Windows.Controls.Primitives.ToggleButton)sender;
+        Topmost = toggle.IsChecked == true;
+    }
+
     private void OnWeeklyThresholdTextChanged(
         object sender,
         TextChangedEventArgs eventArgs)

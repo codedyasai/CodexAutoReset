@@ -130,9 +130,7 @@
                 <ToggleButton x:Name="AlwaysOnTopToggle"
                               Grid.Column="2"
                               Style="{StaticResource HeaderPinToggleStyle}"
-                              IsChecked="{Binding Topmost,
-                                  RelativeSource={RelativeSource AncestorType={x:Type Window}},
-                                  Mode=TwoWay}" />
+                              Click="OnAlwaysOnTopToggleClick" />
             </Grid>
         </Border>
 

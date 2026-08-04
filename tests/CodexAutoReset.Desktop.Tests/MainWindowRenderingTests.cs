@@ -179,18 +179,6 @@ public sealed class MainWindowRenderingTests
                     ((TextBlock)alwaysOnTopToggle.Template.FindName(
                         "PinGlyph",
                         alwaysOnTopToggle)).Text);
-                var alwaysOnTopBinding = BindingOperations.GetBinding(
-                    alwaysOnTopToggle,
-                    ToggleButton.IsCheckedProperty);
-                Assert.IsNotNull(alwaysOnTopBinding);
-                Assert.AreEqual("Topmost", alwaysOnTopBinding.Path.Path);
-                Assert.AreEqual(BindingMode.TwoWay, alwaysOnTopBinding.Mode);
-                Assert.AreEqual(
-                    RelativeSourceMode.FindAncestor,
-                    alwaysOnTopBinding.RelativeSource.Mode);
-                Assert.AreEqual(
-                    typeof(Window),
-                    alwaysOnTopBinding.RelativeSource.AncestorType);
                 var pinnedStateTrigger = alwaysOnTopToggle.Style.Triggers
                     .OfType<Trigger>()
                     .Single(trigger =>

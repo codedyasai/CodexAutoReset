@@ -10,12 +10,12 @@ Windows 트레이 앱입니다. 자동 사용은 한도별로 따로 켜고 끌 
 [Windows용 CodexAutoReset 설치 파일](../../releases/latest/download/CodexAutoReset-Setup-x64.exe)
 · [설치 없이 사용하는 CodexAutoReset ZIP 파일](../../releases/latest/download/CodexAutoReset-Portable-x64.zip)
 
+이 프로젝트는 OpenAI가 제작·지원·보증하는 공식 제품이 아닙니다. Codex 인증
+파일을 직접 읽거나 저장하지 않습니다.
+
 <p align="center">
   <img src="docs/CodexAutoReset.png" alt="CodexAutoReset 앱 화면" width="620">
 </p>
-
-이 프로젝트는 OpenAI가 제작·지원·보증하는 공식 제품이 아닙니다. Codex 인증
-파일을 직접 읽거나 저장하지 않습니다.
 
 ## 주요 기능
 

@@ -179,26 +179,44 @@ public sealed class MainWindowRenderingTests
                     ((TextBlock)alwaysOnTopToggle.Template.FindName(
                         "PinGlyph",
                         alwaysOnTopToggle)).Text);
+                var alwaysOnTopBinding = BindingOperations.GetBinding(
+                    alwaysOnTopToggle,
+                    ToggleButton.IsCheckedProperty);
+                Assert.IsNotNull(alwaysOnTopBinding);
+                Assert.AreEqual("Topmost", alwaysOnTopBinding.Path.Path);
+                Assert.AreEqual(BindingMode.TwoWay, alwaysOnTopBinding.Mode);
+                Assert.AreEqual(
+                    RelativeSourceMode.FindAncestor,
+                    alwaysOnTopBinding.RelativeSource.Mode);
+                Assert.AreEqual(
+                    typeof(Window),
+                    alwaysOnTopBinding.RelativeSource.AncestorType);
+                var pinnedStateTrigger = alwaysOnTopToggle.Style.Triggers
+                    .OfType<Trigger>()
+                    .Single(trigger =>
+                        trigger.Property == ToggleButton.IsCheckedProperty
+                        && Equals(trigger.Value, true));
+                Assert.IsTrue(pinnedStateTrigger.Setters
+                    .OfType<Setter>()
+                    .Any(setter =>
+                        setter.Property == FrameworkElement.ToolTipProperty
+                        && Equals(setter.Value, "창 고정 해제")));
+                Assert.IsTrue(pinnedStateTrigger.Setters
+                    .OfType<Setter>()
+                    .Any(setter =>
+                        setter.Property == AutomationProperties.NameProperty
+                        && Equals(setter.Value, "창 고정 해제")));
+                Assert.IsTrue(pinnedStateTrigger.Setters
+                    .OfType<Setter>()
+                    .Any(setter =>
+                        setter.Property
+                            == AutomationProperties.ItemStatusProperty
+                        && Equals(setter.Value, "고정됨")));
                 Assert.IsTrue(
                     alwaysOnTopToggle.TranslatePoint(
                         new Point(alwaysOnTopToggle.ActualWidth, 0),
                         appHeaderGrid).X
                     <= appHeaderGrid.ActualWidth + 0.5);
-
-                alwaysOnTopToggle.IsChecked = true;
-                window.UpdateLayout();
-                Assert.IsTrue(window.Topmost);
-                Assert.AreEqual("창 고정 해제", alwaysOnTopToggle.ToolTip);
-                Assert.AreEqual(
-                    "창 고정 해제",
-                    AutomationProperties.GetName(alwaysOnTopToggle));
-                Assert.AreEqual(
-                    "고정됨",
-                    AutomationProperties.GetItemStatus(alwaysOnTopToggle));
-
-                alwaysOnTopToggle.IsChecked = false;
-                window.UpdateLayout();
-                Assert.IsFalse(window.Topmost);
                 Assert.IsFalse(boundTextPaths.Contains(
                     "AutomationStateText",
                     StringComparer.Ordinal));

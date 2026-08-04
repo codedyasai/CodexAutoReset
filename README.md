@@ -7,9 +7,8 @@ Windows 트레이 앱입니다. 자동 사용은 한도별로 따로 켜고 끌 
 > 새로 설치하면 주간·5시간 자동 사용은 모두 꺼져 있습니다. 사용자가 직접
 > 켜기 전에는 사용량만 확인하며 초기화권을 사용하지 않습니다.
 
-[Windows 설치 파일](../../releases/latest/download/CodexAutoReset-Setup-x64.exe)
-· [Portable ZIP](../../releases/latest/download/CodexAutoReset-Portable-x64.zip)
-· [SHA-256 확인값](../../releases/latest/download/SHA256SUMS.txt)
+[Windows용 CodexAutoReset 설치 파일](../../releases/latest/download/CodexAutoReset-Setup-x64.exe)
+· [설치 없이 사용하는 CodexAutoReset ZIP 파일](../../releases/latest/download/CodexAutoReset-Portable-x64.zip)
 
 <p align="center">
   <img src="docs/CodexAutoReset.jpg" alt="CodexAutoReset 앱 화면" width="760">

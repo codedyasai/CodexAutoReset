@@ -11,6 +11,10 @@ Windows 트레이 앱입니다. 자동 사용은 한도별로 따로 켜고 끌 
 · [Portable ZIP](../../releases/latest/download/CodexAutoReset-Portable-x64.zip)
 · [SHA-256 확인값](../../releases/latest/download/SHA256SUMS.txt)
 
+<p align="center">
+  <img src="docs/CodexAutoReset.jpg" alt="CodexAutoReset 앱 화면" width="760">
+</p>
+
 이 프로젝트는 OpenAI가 제작·지원·보증하는 공식 제품이 아닙니다. Codex 인증
 파일을 직접 읽거나 저장하지 않습니다.
 

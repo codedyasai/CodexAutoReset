@@ -10,10 +10,6 @@ Windows 트레이 앱입니다. 자동 사용은 한도별로 따로 켜고 끌 
 [Windows용 CodexAutoReset 설치 파일](../../releases/latest/download/CodexAutoReset-Setup-x64.exe)
 · [설치 없이 사용하는 CodexAutoReset ZIP 파일](../../releases/latest/download/CodexAutoReset-Portable-x64.zip)
 
-<p align="center">
-  <img src="docs/CodexAutoReset.jpg" alt="CodexAutoReset 앱 화면" width="760">
-</p>
-
 이 프로젝트는 OpenAI가 제작·지원·보증하는 공식 제품이 아닙니다. Codex 인증
 파일을 직접 읽거나 저장하지 않습니다.
 
@@ -35,15 +31,12 @@ Windows 트레이 앱입니다. 자동 사용은 한도별로 따로 켜고 끌 
 있고 Windows용 `codex.exe`가 설치되어 있어야 합니다. 설치 파일에는 .NET
 런타임이 포함되어 있어 개발 도구나 관리자 권한은 필요하지 않습니다.
 
-1. 위의 **Windows 설치 파일**을 다운로드합니다.
+1. 위의 **Windows용 CodexAutoReset 설치 파일**을 다운로드합니다.
 2. `CodexAutoReset-Setup-x64.exe`를 실행합니다.
 3. 설치를 누르면 완료 후 앱이 자동으로 실행됩니다.
 
 유료 코드 서명을 사용하지 않으므로 SmartScreen에서 `알 수 없는 게시자` 경고가
 표시될 수 있습니다. 반드시 이 저장소의 Release에서 받은 파일인지 확인하세요.
-확인이 필요하면 PowerShell의
-`Get-FileHash .\CodexAutoReset-Setup-x64.exe -Algorithm SHA256` 결과를 함께
-제공되는 `SHA256SUMS.txt`와 비교할 수 있습니다.
 
 ## 처음 설정
 
@@ -78,9 +71,9 @@ Windows 트레이 앱입니다. 자동 사용은 한도별로 따로 켜고 끌 
 - 초기화 알림은 X로 확인할 때까지 유지되며 트레이에서 다시 열 수 있습니다.
 - 우상단 핀을 켜면 실행 중인 창을 다른 창보다 위에 유지합니다.
 
-## Portable, 업데이트와 삭제
+## 설치 없이 사용하기, 업데이트와 삭제
 
-설치 없이 사용하려면 Portable ZIP을 완전히 압축 해제한 뒤 폴더 안의
+설치 없이 사용하려면 위의 ZIP 파일을 완전히 압축 해제한 뒤 폴더 안의
 `CodexAutoReset.exe`를 실행하세요. EXE만 따로 꺼내면 실행되지 않습니다.
 폴더를 옮길 때는 Windows 자동 실행을 먼저 끄고 새 위치에서 다시 켜세요.
 
@@ -92,8 +85,8 @@ Windows 트레이 앱입니다. 자동 사용은 한도별로 따로 켜고 끌 
 설정과 안전 기록도 지울지 묻습니다. 기본값인 **아니요**는 데이터를 남기고,
 **예**는 `%LocalAppData%\CodexResetGuard`와 앱 전용 정보를 영구 삭제합니다.
 
-Portable 폴더만 삭제해도 설정과 안전 기록은 남습니다. 데이터 폴더는 설치본과
-Portable이 함께 사용하므로 모든 복사본을 종료한 뒤에만 삭제하세요.
+ZIP 실행본 폴더만 삭제해도 설정과 안전 기록은 남습니다. 데이터 폴더는 설치본과
+ZIP 실행본이 함께 사용하므로 모든 복사본을 종료한 뒤에만 삭제하세요.
 
 ## 동작 원리와 안전장치
 
@@ -127,8 +120,8 @@ Portable이 함께 사용하므로 모든 복사본을 종료한 뒤에만 삭�
 최신 상태로 확인하세요. 이유를 확인하지 않고 안전 기록을 삭제하면 중복 요청 위험이
 있습니다.
 
-**Windows가 실행을 막음:** 파일명과 다운로드 출처를 확인하고, 출처나 SHA-256이
-일치하지 않으면 실행하지 마세요.
+**Windows가 실행을 막음:** 파일명과 다운로드 출처를 확인하고, 이 저장소의
+Release에서 받은 파일이 아니면 실행하지 마세요.
 
 ## 소스에서 빌드하기
 
@@ -141,7 +134,7 @@ dotnet test CodexAutoReset.sln -c Release --no-build
 dotnet format CodexAutoReset.sln --no-restore --verify-no-changes
 ```
 
-설치 파일과 Portable ZIP은 Inno Setup 6.7 이상을 설치한 뒤
+설치 파일과 설치 없이 사용하는 ZIP 파일은 Inno Setup 6.7 이상을 설치한 뒤
 `.\scripts\build-release.ps1`로 만들 수 있습니다.
 
 ## 라이선스

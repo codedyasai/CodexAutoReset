@@ -2,7 +2,7 @@
 param(
     [Parameter()]
     [ValidatePattern('^\d+\.\d+\.\d+$')]
-    [string]$Version = '0.3.6',
+    [string]$Version = '0.3.7',
 
     [Parameter()]
     [string]$InnoCompilerPath
@@ -202,17 +202,6 @@ if (-not (Test-Path -LiteralPath $compiledInstaller -PathType Leaf)) {
 
 $releaseInstaller = Join-Path $releaseDirectory 'CodexAutoReset-Setup-x64.exe'
 Copy-Item -LiteralPath $compiledInstaller -Destination $releaseInstaller
-
-$checksumFile = Join-Path $releaseDirectory 'SHA256SUMS.txt'
-$releaseFiles = @($releaseInstaller, $portableArchive)
-$checksumLines = foreach ($file in $releaseFiles) {
-    $hash = Get-FileHash -LiteralPath $file -Algorithm SHA256
-    "{0}  {1}" -f $hash.Hash.ToLowerInvariant(), (Split-Path $file -Leaf)
-}
-[System.IO.File]::WriteAllLines(
-    $checksumFile,
-    $checksumLines,
-    [System.Text.UTF8Encoding]::new($false))
 
 Get-ChildItem -LiteralPath $releaseDirectory -File |
     Sort-Object Name |

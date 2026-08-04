@@ -55,6 +55,10 @@ public sealed class MainWindowRenderingTests
                 app = new App();
                 app.InitializeComponent();
                 window = new MainWindow(viewModel);
+                window.ShowInTaskbar = false;
+                window.WindowStartupLocation = WindowStartupLocation.Manual;
+                window.Left = -32_000;
+                window.Top = -32_000;
                 window.Show();
                 window.UpdateLayout();
 

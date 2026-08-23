@@ -27,10 +27,10 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private bool startWithWindows;
     private string weeklyRemainingText = "-";
     private double weeklyRemainingPercent;
-    private string weeklyResetStatus = "다음 갱신 예정 · -";
+    private string weeklyResetStatus = "주간 · -";
     private string fiveHourRemainingText = "-";
     private double fiveHourRemainingPercent;
-    private string fiveHourResetStatus = "다음 갱신 예정 · -";
+    private string fiveHourResetStatus = "5시간 · -";
     private string creditStatus = "-";
     private string lastCheckedStatus = "확인 전";
     private string overallStatusTitle = string.Empty;
@@ -1071,33 +1071,33 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         WeeklyRemainingPercent = snapshot.Weekly is null
             ? 0
             : Math.Clamp(snapshot.Weekly.RemainingPercent, 0, 100);
-        WeeklyResetStatus = FormatReset(snapshot.Weekly);
+        WeeklyResetStatus = FormatReset(snapshot.Weekly, "주간");
         if (snapshot.FiveHour is not null)
         {
             FiveHourRemainingText =
                 $"{snapshot.FiveHour.RemainingPercent:F0}%";
             FiveHourRemainingPercent =
                 Math.Clamp(snapshot.FiveHour.RemainingPercent, 0, 100);
-            FiveHourResetStatus = FormatReset(snapshot.FiveHour);
+            FiveHourResetStatus = FormatReset(snapshot.FiveHour, "5시간");
         }
         else if (snapshot.IsFailure
             || IsCompatibilityWarningState(snapshot.CompatibilityState))
         {
             FiveHourRemainingText = "-";
             FiveHourRemainingPercent = 0;
-            FiveHourResetStatus = "다음 갱신 예정 · -";
+            FiveHourResetStatus = "5시간 · -";
         }
         else if (snapshot.LastSuccessfulObservationAt is not null)
         {
             FiveHourRemainingText = "-";
             FiveHourRemainingPercent = 0;
-            FiveHourResetStatus = "다음 갱신 예정 · -";
+            FiveHourResetStatus = "5시간 · -";
         }
         else
         {
             FiveHourRemainingText = "-";
             FiveHourRemainingPercent = 0;
-            FiveHourResetStatus = "다음 갱신 예정 · -";
+            FiveHourResetStatus = "5시간 · -";
         }
         CreditStatus = snapshot.AvailableCreditCount?.ToString(
             CultureInfo.InvariantCulture) ?? "-";
@@ -1414,17 +1414,19 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(StartupStatusText));
     }
 
-    private static string FormatReset(WindowReading? reading)
+    private static string FormatReset(
+        WindowReading? reading,
+        string periodLabel)
     {
         if (reading is null)
         {
-            return "다음 갱신 예정 · -";
+            return $"{periodLabel} · -";
         }
 
         var resetAt = DateTimeOffset.FromUnixTimeSeconds(reading.ResetsAt)
             .ToLocalTime()
             .ToString("g", CultureInfo.CurrentCulture);
-        return $"다음 갱신 예정 · {resetAt}";
+        return $"{periodLabel} · {resetAt}";
     }
 
     private static string FormatOverallStatus(MonitorSnapshot snapshot)

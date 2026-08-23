@@ -71,6 +71,16 @@ public sealed class MainWindowRenderingTests
                     (Border)window.FindName("FiveHourUsageCard");
                 var usageSummaryGrid =
                     (Grid)window.FindName("UsageSummaryGrid");
+                var lastCheckedInlineText =
+                    (TextBlock)window.FindName("LastCheckedInlineText");
+                var resetSchedulePanel =
+                    (StackPanel)window.FindName("ResetSchedulePanel");
+                var resetScheduleHeadingText =
+                    (TextBlock)window.FindName("ResetScheduleHeadingText");
+                var weeklyResetSummaryText =
+                    (TextBlock)window.FindName("WeeklyResetSummaryText");
+                var fiveHourResetSummaryText =
+                    (TextBlock)window.FindName("FiveHourResetSummaryText");
                 var settingsCard = (Border)window.FindName("SettingsCard");
                 var overallStatusPanel =
                     (Border)window.FindName("OverallStatusPanel");
@@ -136,14 +146,6 @@ public sealed class MainWindowRenderingTests
                             TextBlock.TextProperty)?.Path?.Path,
                         "CreditStatus",
                         StringComparison.Ordinal));
-                var lastCheckedStatusValue = FindVisualChildren<TextBlock>(window)
-                    .Single(textBlock => string.Equals(
-                        BindingOperations.GetBinding(
-                            textBlock,
-                            TextBlock.TextProperty)?.Path?.Path,
-                        "LastCheckedStatus",
-                        StringComparison.Ordinal));
-
                 Assert.AreEqual(0, Grid.GetRow(connectionCard));
                 Assert.AreEqual(1, Grid.GetRow(usageCard));
                 Assert.AreEqual(2, Grid.GetRow(settingsCard));
@@ -151,6 +153,14 @@ public sealed class MainWindowRenderingTests
                 Assert.IsTrue(usageCard.IsAncestorOf(fiveHourUsageSection));
                 Assert.IsTrue(usageCard.IsAncestorOf(refreshButton));
                 Assert.IsTrue(usageCard.IsAncestorOf(usageSummaryGrid));
+                Assert.IsTrue(fiveHourUsageSection.IsAncestorOf(
+                    lastCheckedInlineText));
+                Assert.IsTrue(usageSummaryGrid.IsAncestorOf(
+                    resetSchedulePanel));
+                Assert.IsTrue(resetSchedulePanel.IsAncestorOf(
+                    weeklyResetSummaryText));
+                Assert.IsTrue(resetSchedulePanel.IsAncestorOf(
+                    fiveHourResetSummaryText));
                 Assert.IsTrue(
                     weeklyUsageSection.TranslatePoint(
                         new Point(0, weeklyUsageSection.ActualHeight),
@@ -169,6 +179,19 @@ public sealed class MainWindowRenderingTests
                 Assert.AreEqual(2, Grid.GetColumn(alwaysOnTopToggle));
                 Assert.IsFalse(alwaysOnTopToggle.IsChecked);
                 Assert.IsFalse(window.Topmost);
+                var alwaysOnTopChangedCount = 0;
+                window.AlwaysOnTopChanged += (_, _) =>
+                    alwaysOnTopChangedCount++;
+                alwaysOnTopToggle.IsChecked = true;
+                alwaysOnTopToggle.RaiseEvent(
+                    new RoutedEventArgs(ButtonBase.ClickEvent));
+                Assert.IsTrue(window.Topmost);
+                Assert.AreEqual(1, alwaysOnTopChangedCount);
+                alwaysOnTopToggle.IsChecked = false;
+                alwaysOnTopToggle.RaiseEvent(
+                    new RoutedEventArgs(ButtonBase.ClickEvent));
+                Assert.IsFalse(window.Topmost);
+                Assert.AreEqual(2, alwaysOnTopChangedCount);
                 Assert.AreEqual(
                     "창을 항상 위에 고정",
                     alwaysOnTopToggle.ToolTip);
@@ -225,13 +248,20 @@ public sealed class MainWindowRenderingTests
                     "FiveHourRemainingText",
                     StringComparer.Ordinal));
                 Assert.IsTrue(boundTextPaths.Contains(
+                    "WeeklyResetStatus",
+                    StringComparer.Ordinal));
+                Assert.IsTrue(boundTextPaths.Contains(
                     "FiveHourResetStatus",
                     StringComparer.Ordinal));
-                Assert.IsTrue(FindVisualChildren<TextBlock>(window).Any(textBlock =>
-                    string.Equals(
-                        textBlock.Text,
-                        "최근 사용량 확인",
-                        StringComparison.Ordinal)));
+                Assert.IsTrue(boundTextPaths.Contains(
+                    "LastCheckedStatus",
+                    StringComparer.Ordinal));
+                Assert.AreEqual(
+                    "최근 사용량 확인 · 확인 전",
+                    lastCheckedInlineText.Text);
+                Assert.AreEqual(
+                    "다음 갱신 예정",
+                    resetScheduleHeadingText.Text);
                 Assert.IsFalse(FindVisualChildren<TextBlock>(window).Any(textBlock =>
                     string.Equals(
                         textBlock.Text,
@@ -240,7 +270,17 @@ public sealed class MainWindowRenderingTests
                 Assert.AreEqual(16, creditStatusValue.FontSize);
                 Assert.AreEqual(
                     creditStatusValue.FontSize,
-                    lastCheckedStatusValue.FontSize);
+                    weeklyResetSummaryText.FontSize);
+                Assert.AreEqual(
+                    weeklyResetSummaryText.FontSize,
+                    fiveHourResetSummaryText.FontSize);
+                Assert.AreEqual(13, lastCheckedInlineText.FontSize);
+                Assert.AreEqual(
+                    FontWeights.SemiBold,
+                    weeklyResetSummaryText.FontWeight);
+                Assert.AreEqual(
+                    weeklyResetSummaryText.FontWeight,
+                    fiveHourResetSummaryText.FontWeight);
                 Assert.IsTrue(codexConnectionPathBox.IsAncestorOf(
                     codexConnectionPathPanel));
                 Assert.IsTrue(codexConnectionPathPanel.IsAncestorOf(
@@ -477,7 +517,7 @@ public sealed class MainWindowRenderingTests
                         codexConnectionPathPanel).X
                     <= codexConnectionPathPanel.ActualWidth + 0.5);
 
-                NotificationPopupWindowTestAssertions.Run();
+                NotificationPopupWindowTestAssertions.Run(window);
                 completed = window.IsLoaded && window.ActualWidth > 0 && window.ActualHeight > 0;
             }
             catch (Exception exception)

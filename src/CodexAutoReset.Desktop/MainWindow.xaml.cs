@@ -18,6 +18,8 @@ public partial class MainWindow : Window
     private bool fiveHourThresholdSaveInProgress;
     private bool allowClose;
 
+    public event EventHandler? AlwaysOnTopChanged;
+
     public MainWindow(
         MainWindowViewModel viewModel,
         Func<bool, Task>? usageResetNotificationSettingChanged = null)
@@ -155,6 +157,7 @@ public partial class MainWindow : Window
         var toggle =
             (System.Windows.Controls.Primitives.ToggleButton)sender;
         Topmost = toggle.IsChecked == true;
+        AlwaysOnTopChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private void OnWeeklyThresholdTextChanged(

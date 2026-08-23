@@ -4,7 +4,7 @@
 #define LegacyAppExecutable "CodexResetGuard.exe"
 
 #ifndef AppVersion
-  #define AppVersion "0.3.7"
+  #define AppVersion "0.3.8"
 #endif
 
 #ifndef PublishDir

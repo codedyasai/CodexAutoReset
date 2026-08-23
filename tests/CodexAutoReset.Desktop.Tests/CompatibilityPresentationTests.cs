@@ -45,7 +45,7 @@ public sealed class CompatibilityPresentationTests
             fixture.ViewModel.OverallStatus);
         Assert.AreEqual("-", fixture.ViewModel.WeeklyRemainingText);
         Assert.AreEqual(
-            "다음 갱신 예정 · -",
+            "주간 · -",
             fixture.ViewModel.WeeklyResetStatus);
         Assert.AreEqual(
             lastSuccess.ToLocalTime().ToString("g", CultureInfo.CurrentCulture),

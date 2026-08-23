@@ -14,7 +14,7 @@
         Background="Transparent"
         ShowActivated="False"
         ShowInTaskbar="False"
-        Topmost="False"
+        Topmost="True"
         UseLayoutRounding="True"
         SnapsToDevicePixels="True"
         TextOptions.TextFormattingMode="Display"

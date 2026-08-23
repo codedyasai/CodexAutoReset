@@ -304,9 +304,6 @@
                                          Value="{Binding WeeklyRemainingPercent, Mode=OneWay}"
                                          AutomationProperties.Name="주간 한도 잔여량 백분율"
                                          AutomationProperties.HelpText="0에서 100 사이의 주간 한도 잔여량입니다." />
-                            <TextBlock Style="{StaticResource CaptionTextStyle}"
-                                       Text="{Binding WeeklyResetStatus}"
-                                       TextWrapping="Wrap" />
                         </StackPanel>
 
                         <Separator Margin="0,20"
@@ -332,10 +329,15 @@
                                              Value="{Binding FiveHourRemainingPercent, Mode=OneWay}"
                                              AutomationProperties.Name="5시간 한도 잔여량 백분율"
                                              AutomationProperties.HelpText="0에서 100 사이의 5시간 한도 잔여량입니다." />
-                                <TextBlock Style="{StaticResource CaptionTextStyle}"
-                                           Text="{Binding FiveHourResetStatus}"
+                                <TextBlock x:Name="LastCheckedInlineText"
+                                           Style="{StaticResource CaptionTextStyle}"
                                            TextWrapping="Wrap"
-                                           AutomationProperties.LiveSetting="Polite" />
+                                           AutomationProperties.LiveSetting="Polite">
+                                    <TextBlock.Text>
+                                        <Binding Path="LastCheckedStatus"
+                                                 StringFormat="최근 사용량 확인 · {0}" />
+                                    </TextBlock.Text>
+                                </TextBlock>
                             </StackPanel>
                         </Border>
 
@@ -450,15 +452,26 @@
                             <Border Grid.Column="1"
                                     Background="{StaticResource BorderBrush}" />
 
-                            <StackPanel Grid.Column="2"
+                            <StackPanel x:Name="ResetSchedulePanel"
+                                        Grid.Column="2"
                                         Margin="20,0,0,0">
-                                <TextBlock Style="{StaticResource CaptionTextStyle}"
-                                           Text="최근 사용량 확인" />
-                                <TextBlock Margin="0,7,0,0"
+                                <TextBlock x:Name="ResetScheduleHeadingText"
+                                           Style="{StaticResource CaptionTextStyle}"
+                                           Text="다음 갱신 예정" />
+                                <TextBlock x:Name="WeeklyResetSummaryText"
+                                           Margin="0,7,0,0"
                                            FontSize="16"
                                            FontWeight="SemiBold"
-                                           Text="{Binding LastCheckedStatus}"
-                                           TextWrapping="Wrap" />
+                                           Text="{Binding WeeklyResetStatus}"
+                                           TextWrapping="Wrap"
+                                           AutomationProperties.LiveSetting="Polite" />
+                                <TextBlock x:Name="FiveHourResetSummaryText"
+                                           Margin="0,4,0,0"
+                                           FontSize="16"
+                                           FontWeight="SemiBold"
+                                           Text="{Binding FiveHourResetStatus}"
+                                           TextWrapping="Wrap"
+                                           AutomationProperties.LiveSetting="Polite" />
                             </StackPanel>
                         </Grid>
                     </StackPanel>

@@ -261,6 +261,7 @@ internal static class NotificationPopupPlacement
     private const uint SwpNoZOrder = 0x0004;
     private const double MarginDip = 16;
     private static readonly nint HwndTop = 0;
+    private static readonly nint HwndTopmost = new(-1);
 
     public static nint GetActiveMonitor()
     {
@@ -321,7 +322,7 @@ internal static class NotificationPopupPlacement
 
         if (!SetWindowPos(
             handle,
-            HwndTop,
+            bringToFront ? HwndTopmost : HwndTop,
             left,
             top,
             width,

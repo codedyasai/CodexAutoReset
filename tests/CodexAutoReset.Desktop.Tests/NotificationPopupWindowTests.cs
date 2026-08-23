@@ -15,7 +15,7 @@ namespace CodexAutoReset.Desktop.Tests;
 
 internal static class NotificationPopupWindowTestAssertions
 {
-    public static void Run()
+    public static void Run(MainWindow competingWindow)
     {
         var openAppCount = 0;
         var firstConfirmationCount = 0;
@@ -58,7 +58,7 @@ internal static class NotificationPopupWindowTestAssertions
         Assert.IsFalse(popup.IsActive);
         Assert.IsFalse(popup.ShowActivated);
         Assert.IsFalse(popup.ShowInTaskbar);
-        Assert.IsFalse(popup.Topmost);
+        Assert.IsTrue(popup.Topmost);
         Assert.AreEqual(WindowStyle.None, popup.WindowStyle);
         Assert.AreEqual(1d, popup.Opacity, 0.001);
 
@@ -115,6 +115,42 @@ internal static class NotificationPopupWindowTestAssertions
         Assert.AreEqual(32d, closeButton.ActualHeight, 0.001);
         AssertPopupUsesSixteenDipWorkingAreaMargin(popup);
 
+        var pinToggle = (System.Windows.Controls.Primitives.ToggleButton)
+            competingWindow.FindName("AlwaysOnTopToggle");
+        var foregroundBeforePin = GetForegroundWindow();
+        var observedMainAbovePopup = false;
+        EventHandler reassertPopupZOrder = (_, _) =>
+        {
+            if (!competingWindow.Topmost)
+            {
+                return;
+            }
+
+            observedMainAbovePopup = IsWindowAbove(competingWindow, popup);
+            controller.BringToFrontWithoutActivation();
+        };
+        competingWindow.AlwaysOnTopChanged += reassertPopupZOrder;
+        try
+        {
+            pinToggle.IsChecked = true;
+            pinToggle.RaiseEvent(
+                new RoutedEventArgs(
+                    System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+
+            Assert.IsTrue(observedMainAbovePopup);
+            AssertWindowIsAbove(popup, competingWindow);
+            Assert.AreEqual(foregroundBeforePin, GetForegroundWindow());
+            Assert.IsFalse(popup.IsActive);
+        }
+        finally
+        {
+            competingWindow.AlwaysOnTopChanged -= reassertPopupZOrder;
+            pinToggle.IsChecked = false;
+            pinToggle.RaiseEvent(
+                new RoutedEventArgs(
+                    System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+        }
+
         popup.Close();
         Assert.AreEqual(0, firstConfirmationCount);
         Assert.IsTrue(controller.IsVisible);
@@ -135,6 +171,7 @@ internal static class NotificationPopupWindowTestAssertions
 
         controller.BringToFrontWithoutActivation();
         Assert.IsFalse(popup.IsActive);
+        Assert.IsTrue(popup.Topmost);
 
         openButton.RaiseEvent(
             new RoutedEventArgs(Button.ClickEvent));
@@ -250,6 +287,42 @@ internal static class NotificationPopupWindowTestAssertions
         Assert.AreEqual(16d, bottomMargin, 2d);
     }
 
+    private static void AssertWindowIsAbove(
+        Window expectedAbove,
+        Window expectedBelow)
+    {
+        Assert.IsTrue(
+            IsWindowAbove(expectedAbove, expectedBelow),
+            "Expected window was below the competing topmost window.");
+    }
+
+    private static bool IsWindowAbove(
+        Window expectedAbove,
+        Window expectedBelow)
+    {
+        const uint nextWindow = 2;
+        var expectedAboveHandle = new WindowInteropHelper(expectedAbove).Handle;
+        var expectedBelowHandle = new WindowInteropHelper(expectedBelow).Handle;
+
+        for (var current = GetTopWindow(0);
+             current != 0;
+             current = GetWindow(current, nextWindow))
+        {
+            if (current == expectedAboveHandle)
+            {
+                return true;
+            }
+
+            if (current == expectedBelowHandle)
+            {
+                return false;
+            }
+        }
+
+        Assert.Fail("Expected windows were not found in the native z-order.");
+        return false;
+    }
+
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetWindowRect(
@@ -258,6 +331,15 @@ internal static class NotificationPopupWindowTestAssertions
 
     [DllImport("user32.dll")]
     private static extern uint GetDpiForWindow(nint window);
+
+    [DllImport("user32.dll")]
+    private static extern nint GetTopWindow(nint window);
+
+    [DllImport("user32.dll")]
+    private static extern nint GetWindow(nint window, uint command);
+
+    [DllImport("user32.dll")]
+    private static extern nint GetForegroundWindow();
 
     [StructLayout(LayoutKind.Sequential)]
     private struct NativeRect

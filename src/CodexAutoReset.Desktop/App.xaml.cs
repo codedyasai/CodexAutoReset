@@ -156,6 +156,8 @@ public partial class App : System.Windows.Application
             await usageResetNotificationCoordinator.InitializeAsync(
                 settings.NotifyOnUsageReset,
                 CancellationToken.None);
+            window.Activated += OnMainWindowActivated;
+            window.AlwaysOnTopChanged += OnMainWindowAlwaysOnTopChanged;
 
             tray = new TrayIconHost(
                 viewModel,
@@ -271,6 +273,12 @@ public partial class App : System.Windows.Application
         tray?.Dispose();
         tray = null;
 
+        if (MainWindow is CodexAutoReset.Desktop.MainWindow mainWindow)
+        {
+            mainWindow.Activated -= OnMainWindowActivated;
+            mainWindow.AlwaysOnTopChanged -= OnMainWindowAlwaysOnTopChanged;
+        }
+
         if (usageResetNotificationCoordinator is not null)
         {
             await usageResetNotificationCoordinator.DisposeAsync();
@@ -299,6 +307,14 @@ public partial class App : System.Windows.Application
             enabled,
             CancellationToken.None)
         ?? Task.CompletedTask;
+
+    private void OnMainWindowActivated(object? sender, EventArgs eventArgs) =>
+        usageResetNotificationCoordinator?.BringPendingToFront();
+
+    private void OnMainWindowAlwaysOnTopChanged(
+        object? sender,
+        EventArgs eventArgs) =>
+        usageResetNotificationCoordinator?.BringPendingToFront();
 
     private sealed record DesktopArguments(
         bool Background,

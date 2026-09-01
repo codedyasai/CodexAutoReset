@@ -46,6 +46,8 @@ public sealed record MonitorSnapshot(
 {
     public WindowReading? FiveHour { get; init; }
 
+    public IReadOnlyList<long?>? AvailableCreditExpirations { get; init; }
+
     public static MonitorSnapshot Waiting(GuardSettings settings) => new(
         DateTimeOffset.UtcNow,
         settings,
@@ -76,7 +78,55 @@ public sealed record MonitorSnapshot(
             result.AccountRateLimits.ObservedAt)
         {
             FiveHour = result.Evaluation.FiveHour,
+            AvailableCreditExpirations = GetAvailableCreditExpirations(
+                result.AccountRateLimits.ResetCredits,
+                result.AccountRateLimits.ObservedAt),
         };
+
+    private static IReadOnlyList<long?>? GetAvailableCreditExpirations(
+        ResetCreditSummary? summary,
+        DateTimeOffset observedAt)
+    {
+        if (summary?.Credits is not { } credits)
+        {
+            return null;
+        }
+
+        var observedAtUnix = observedAt.ToUnixTimeSeconds();
+        return credits
+            .Where(credit => string.Equals(
+                credit.ResetType,
+                "codexRateLimits",
+                StringComparison.Ordinal))
+            .Where(credit => string.Equals(
+                credit.Status,
+                "available",
+                StringComparison.Ordinal))
+            .Where(credit =>
+                credit.ExpiresAt is null
+                || credit.ExpiresAt > observedAtUnix)
+            .Select(credit => NormalizeExpiration(credit.ExpiresAt))
+            .OrderBy(expiresAt => expiresAt ?? long.MaxValue)
+            .ToArray();
+    }
+
+    private static long? NormalizeExpiration(long? expiresAt)
+    {
+        if (expiresAt is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            _ = DateTimeOffset.FromUnixTimeSeconds(expiresAt.Value);
+            return expiresAt;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return null;
+        }
+    }
 
     public static MonitorSnapshot Failure(
         GuardSettings settings,

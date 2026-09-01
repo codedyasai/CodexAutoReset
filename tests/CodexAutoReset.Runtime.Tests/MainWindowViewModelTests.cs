@@ -1302,7 +1302,7 @@ public sealed class MainWindowViewModelTests
         Assert.AreEqual("-", viewModel.FiveHourRemainingText);
         Assert.AreEqual(0, viewModel.FiveHourRemainingPercent);
         Assert.AreEqual(
-            "5시간 · -",
+            "다음 갱신 예정 · -",
             viewModel.FiveHourResetStatus);
     }
 
@@ -1376,7 +1376,7 @@ public sealed class MainWindowViewModelTests
         Assert.AreEqual("-", viewModel.FiveHourRemainingText);
         Assert.AreEqual(0, viewModel.FiveHourRemainingPercent);
         Assert.AreEqual(
-            "5시간 · -",
+            "다음 갱신 예정 · -",
             viewModel.FiveHourResetStatus);
         Assert.AreEqual("-", viewModel.CreditStatus);
     }
@@ -1409,11 +1409,13 @@ public sealed class MainWindowViewModelTests
 
         Assert.AreEqual("100%", viewModel.WeeklyRemainingText);
         Assert.AreEqual(100, viewModel.WeeklyRemainingPercent);
-        StringAssert.StartsWith(viewModel.WeeklyResetStatus, "주간 · ");
+        StringAssert.StartsWith(
+            viewModel.WeeklyResetStatus,
+            "다음 갱신 예정 · ");
         Assert.AreEqual("-", viewModel.FiveHourRemainingText);
         Assert.AreEqual(0, viewModel.FiveHourRemainingPercent);
         Assert.AreEqual(
-            "5시간 · -",
+            "다음 갱신 예정 · -",
             viewModel.FiveHourResetStatus);
         Assert.IsFalse(
             viewModel.FiveHourResetStatus.Contains(
@@ -1452,7 +1454,7 @@ public sealed class MainWindowViewModelTests
         Assert.AreEqual(57.6, viewModel.FiveHourRemainingPercent);
         StringAssert.Contains(
             viewModel.FiveHourResetStatus,
-            "5시간 · ");
+            "다음 갱신 예정 · ");
         Assert.AreEqual(
             resetAt,
             monitor.CurrentSnapshot.FiveHour?.ResetsAt);

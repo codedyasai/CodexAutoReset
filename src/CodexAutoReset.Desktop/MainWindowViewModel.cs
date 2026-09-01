@@ -27,11 +27,12 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private bool startWithWindows;
     private string weeklyRemainingText = "-";
     private double weeklyRemainingPercent;
-    private string weeklyResetStatus = "주간 · -";
+    private string weeklyResetStatus = "다음 갱신 예정 · -";
     private string fiveHourRemainingText = "-";
     private double fiveHourRemainingPercent;
-    private string fiveHourResetStatus = "5시간 · -";
+    private string fiveHourResetStatus = "다음 갱신 예정 · -";
     private string creditStatus = "-";
+    private IReadOnlyList<string> creditExpirationItems = ["-"];
     private string lastCheckedStatus = "확인 전";
     private string overallStatusTitle = string.Empty;
     private string overallStatus = string.Empty;
@@ -218,6 +219,12 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     {
         get => creditStatus;
         private set => SetField(ref creditStatus, value);
+    }
+
+    public IReadOnlyList<string> CreditExpirationItems
+    {
+        get => creditExpirationItems;
+        private set => SetField(ref creditExpirationItems, value);
     }
 
     public string LastCheckedStatus
@@ -1071,36 +1078,37 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         WeeklyRemainingPercent = snapshot.Weekly is null
             ? 0
             : Math.Clamp(snapshot.Weekly.RemainingPercent, 0, 100);
-        WeeklyResetStatus = FormatReset(snapshot.Weekly, "주간");
+        WeeklyResetStatus = FormatReset(snapshot.Weekly);
         if (snapshot.FiveHour is not null)
         {
             FiveHourRemainingText =
                 $"{snapshot.FiveHour.RemainingPercent:F0}%";
             FiveHourRemainingPercent =
                 Math.Clamp(snapshot.FiveHour.RemainingPercent, 0, 100);
-            FiveHourResetStatus = FormatReset(snapshot.FiveHour, "5시간");
+            FiveHourResetStatus = FormatReset(snapshot.FiveHour);
         }
         else if (snapshot.IsFailure
             || IsCompatibilityWarningState(snapshot.CompatibilityState))
         {
             FiveHourRemainingText = "-";
             FiveHourRemainingPercent = 0;
-            FiveHourResetStatus = "5시간 · -";
+            FiveHourResetStatus = "다음 갱신 예정 · -";
         }
         else if (snapshot.LastSuccessfulObservationAt is not null)
         {
             FiveHourRemainingText = "-";
             FiveHourRemainingPercent = 0;
-            FiveHourResetStatus = "5시간 · -";
+            FiveHourResetStatus = "다음 갱신 예정 · -";
         }
         else
         {
             FiveHourRemainingText = "-";
             FiveHourRemainingPercent = 0;
-            FiveHourResetStatus = "5시간 · -";
+            FiveHourResetStatus = "다음 갱신 예정 · -";
         }
         CreditStatus = snapshot.AvailableCreditCount?.ToString(
             CultureInfo.InvariantCulture) ?? "-";
+        CreditExpirationItems = FormatCreditExpirationItems(snapshot);
         LastCheckedStatus = snapshot.LastSuccessfulObservationAt is { } lastSuccess
             ? lastSuccess.ToLocalTime().ToString("g", CultureInfo.CurrentCulture)
             : "확인 전";
@@ -1414,19 +1422,78 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(StartupStatusText));
     }
 
-    private static string FormatReset(
-        WindowReading? reading,
-        string periodLabel)
+    private static string FormatReset(WindowReading? reading)
     {
         if (reading is null)
         {
-            return $"{periodLabel} · -";
+            return "다음 갱신 예정 · -";
         }
 
         var resetAt = DateTimeOffset.FromUnixTimeSeconds(reading.ResetsAt)
             .ToLocalTime()
             .ToString("g", CultureInfo.CurrentCulture);
-        return $"{periodLabel} · {resetAt}";
+        return $"다음 갱신 예정 · {resetAt}";
+    }
+
+    private static IReadOnlyList<string> FormatCreditExpirationItems(
+        MonitorSnapshot snapshot)
+    {
+        if (snapshot.AvailableCreditCount is not { } availableCount)
+        {
+            return ["-"];
+        }
+
+        if (availableCount < 0)
+        {
+            return ["-"];
+        }
+
+        if (availableCount == 0)
+        {
+            return ["만료 예정 없음"];
+        }
+
+        var expirations = snapshot.AvailableCreditExpirations;
+        if (expirations is null || expirations.Count == 0)
+        {
+            return ["만료일 정보 없음"];
+        }
+
+        var items = new List<string>(expirations.Count + 1);
+        for (var index = 0; index < expirations.Count; index++)
+        {
+            items.Add(
+                $"초기화권 {index + 1} · {FormatCreditExpiration(expirations[index])}");
+        }
+
+        var unlistedCount = availableCount - expirations.Count;
+        if (unlistedCount > 0)
+        {
+            items.Add($"나머지 {unlistedCount}개 · 만료일 정보 없음");
+        }
+
+        return items;
+    }
+
+    private static string FormatCreditExpiration(long? expiresAt)
+    {
+        if (expiresAt is null)
+        {
+            return "만료일 정보 없음";
+        }
+
+        try
+        {
+            var localExpiration = DateTimeOffset
+                .FromUnixTimeSeconds(expiresAt.Value)
+                .ToLocalTime()
+                .ToString("g", CultureInfo.CurrentCulture);
+            return $"{localExpiration} 만료";
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return "만료일 정보 없음";
+        }
     }
 
     private static string FormatOverallStatus(MonitorSnapshot snapshot)

@@ -71,16 +71,20 @@ public sealed class MainWindowRenderingTests
                     (Border)window.FindName("FiveHourUsageCard");
                 var usageSummaryGrid =
                     (Grid)window.FindName("UsageSummaryGrid");
+                var usageHeaderGrid =
+                    (Grid)window.FindName("UsageHeaderGrid");
                 var lastCheckedInlineText =
                     (TextBlock)window.FindName("LastCheckedInlineText");
-                var resetSchedulePanel =
-                    (StackPanel)window.FindName("ResetSchedulePanel");
-                var resetScheduleHeadingText =
-                    (TextBlock)window.FindName("ResetScheduleHeadingText");
-                var weeklyResetSummaryText =
-                    (TextBlock)window.FindName("WeeklyResetSummaryText");
-                var fiveHourResetSummaryText =
-                    (TextBlock)window.FindName("FiveHourResetSummaryText");
+                var weeklyResetInlineText =
+                    (TextBlock)window.FindName("WeeklyResetInlineText");
+                var fiveHourResetInlineText =
+                    (TextBlock)window.FindName("FiveHourResetInlineText");
+                var creditExpirationScrollViewer =
+                    (ScrollViewer)window.FindName(
+                        "CreditExpirationScrollViewer");
+                var creditExpirationItemsControl =
+                    (ItemsControl)window.FindName(
+                        "CreditExpirationItemsControl");
                 var settingsCard = (Border)window.FindName("SettingsCard");
                 var overallStatusPanel =
                     (Border)window.FindName("OverallStatusPanel");
@@ -126,6 +130,16 @@ public sealed class MainWindowRenderingTests
                 var buttons = FindVisualChildren<Button>(window).ToArray();
                 var progressBars =
                     FindVisualChildren<ProgressBar>(window).ToArray();
+                var weeklyUsageProgressBar = progressBars.Single(progressBar =>
+                    string.Equals(
+                        AutomationProperties.GetName(progressBar),
+                        "주간 한도 잔여량 백분율",
+                        StringComparison.Ordinal));
+                var fiveHourUsageProgressBar = progressBars.Single(progressBar =>
+                    string.Equals(
+                        AutomationProperties.GetName(progressBar),
+                        "5시간 한도 잔여량 백분율",
+                        StringComparison.Ordinal));
                 var automaticFindButton = buttons.Single(button =>
                     string.Equals(GetButtonText(button), "자동 찾기", StringComparison.Ordinal));
                 var directFindButton = buttons.Single(button =>
@@ -149,18 +163,38 @@ public sealed class MainWindowRenderingTests
                 Assert.AreEqual(0, Grid.GetRow(connectionCard));
                 Assert.AreEqual(1, Grid.GetRow(usageCard));
                 Assert.AreEqual(2, Grid.GetRow(settingsCard));
+                Assert.AreEqual(800, window.Width);
+                Assert.AreEqual(820, window.Height);
+                Assert.AreEqual(680, window.MinWidth);
+                Assert.AreEqual(620, window.MinHeight);
                 Assert.IsTrue(usageCard.IsAncestorOf(weeklyUsageSection));
                 Assert.IsTrue(usageCard.IsAncestorOf(fiveHourUsageSection));
                 Assert.IsTrue(usageCard.IsAncestorOf(refreshButton));
                 Assert.IsTrue(usageCard.IsAncestorOf(usageSummaryGrid));
-                Assert.IsTrue(fiveHourUsageSection.IsAncestorOf(
+                Assert.IsTrue(usageHeaderGrid.IsAncestorOf(
                     lastCheckedInlineText));
+                Assert.IsTrue(weeklyUsageSection.IsAncestorOf(
+                    weeklyResetInlineText));
+                Assert.IsTrue(fiveHourUsageSection.IsAncestorOf(
+                    fiveHourResetInlineText));
+                Assert.IsTrue(
+                    weeklyUsageProgressBar.TranslatePoint(
+                        new Point(0, weeklyUsageProgressBar.ActualHeight),
+                        weeklyUsageSection).Y
+                    <= weeklyResetInlineText.TranslatePoint(
+                        new Point(),
+                        weeklyUsageSection).Y);
+                Assert.IsTrue(
+                    fiveHourUsageProgressBar.TranslatePoint(
+                        new Point(0, fiveHourUsageProgressBar.ActualHeight),
+                        fiveHourUsageSection).Y
+                    <= fiveHourResetInlineText.TranslatePoint(
+                        new Point(),
+                        fiveHourUsageSection).Y);
                 Assert.IsTrue(usageSummaryGrid.IsAncestorOf(
-                    resetSchedulePanel));
-                Assert.IsTrue(resetSchedulePanel.IsAncestorOf(
-                    weeklyResetSummaryText));
-                Assert.IsTrue(resetSchedulePanel.IsAncestorOf(
-                    fiveHourResetSummaryText));
+                    creditExpirationScrollViewer));
+                Assert.IsTrue(creditExpirationScrollViewer.IsAncestorOf(
+                    creditExpirationItemsControl));
                 Assert.IsTrue(
                     weeklyUsageSection.TranslatePoint(
                         new Point(0, weeklyUsageSection.ActualHeight),
@@ -175,6 +209,10 @@ public sealed class MainWindowRenderingTests
                     <= usageSummaryGrid.TranslatePoint(
                         new Point(),
                         window).Y);
+                Assert.AreEqual(
+                    weeklyUsageSection.ActualWidth,
+                    usageSummaryGrid.ActualWidth,
+                    0.5);
                 Assert.AreEqual(3, appHeaderGrid.ColumnDefinitions.Count);
                 Assert.AreEqual(2, Grid.GetColumn(alwaysOnTopToggle));
                 Assert.IsFalse(alwaysOnTopToggle.IsChecked);
@@ -260,27 +298,58 @@ public sealed class MainWindowRenderingTests
                     "최근 사용량 확인 · 확인 전",
                     lastCheckedInlineText.Text);
                 Assert.AreEqual(
-                    "다음 갱신 예정",
-                    resetScheduleHeadingText.Text);
+                    "다음 갱신 예정 · -",
+                    weeklyResetInlineText.Text);
+                Assert.AreEqual(
+                    "다음 갱신 예정 · -",
+                    fiveHourResetInlineText.Text);
                 Assert.IsFalse(FindVisualChildren<TextBlock>(window).Any(textBlock =>
                     string.Equals(
                         textBlock.Text,
                         "마지막 정상 확인",
                         StringComparison.Ordinal)));
                 Assert.AreEqual(16, creditStatusValue.FontSize);
-                Assert.AreEqual(
-                    creditStatusValue.FontSize,
-                    weeklyResetSummaryText.FontSize);
-                Assert.AreEqual(
-                    weeklyResetSummaryText.FontSize,
-                    fiveHourResetSummaryText.FontSize);
                 Assert.AreEqual(13, lastCheckedInlineText.FontSize);
+                Assert.AreEqual(13, weeklyResetInlineText.FontSize);
+                Assert.AreEqual(
+                    weeklyResetInlineText.FontSize,
+                    fiveHourResetInlineText.FontSize);
                 Assert.AreEqual(
                     FontWeights.SemiBold,
-                    weeklyResetSummaryText.FontWeight);
+                    weeklyResetInlineText.FontWeight);
                 Assert.AreEqual(
-                    weeklyResetSummaryText.FontWeight,
-                    fiveHourResetSummaryText.FontWeight);
+                    weeklyResetInlineText.FontWeight,
+                    fiveHourResetInlineText.FontWeight);
+                Assert.AreEqual(1, Grid.GetColumn(lastCheckedInlineText));
+                Assert.AreEqual(2, Grid.GetColumn((UIElement)refreshButton.Parent));
+                Assert.IsTrue(
+                    lastCheckedInlineText.TranslatePoint(
+                        new Point(lastCheckedInlineText.ActualWidth, 0),
+                        usageHeaderGrid).X
+                    <= refreshButton.TranslatePoint(
+                        new Point(),
+                        usageHeaderGrid).X);
+                Assert.AreEqual(48, creditExpirationScrollViewer.Height);
+                Assert.AreEqual(
+                    ScrollBarVisibility.Auto,
+                    creditExpirationScrollViewer.VerticalScrollBarVisibility);
+                Assert.AreEqual(
+                    ScrollBarVisibility.Disabled,
+                    creditExpirationScrollViewer.HorizontalScrollBarVisibility);
+                Assert.AreEqual(
+                    "CreditExpirationItems",
+                    BindingOperations.GetBinding(
+                        creditExpirationItemsControl,
+                        ItemsControl.ItemsSourceProperty)?.Path?.Path);
+                Assert.AreEqual(1, creditExpirationItemsControl.Items.Count);
+                Assert.AreEqual("-", creditExpirationItemsControl.Items[0]);
+                creditExpirationItemsControl.ItemsSource = Enumerable
+                    .Range(1, 12)
+                    .Select(index => $"초기화권 {index} 만료일")
+                    .ToArray();
+                window.UpdateLayout();
+                Assert.IsTrue(creditExpirationScrollViewer.ScrollableHeight > 0);
+                Assert.IsNull(window.FindName("ResetSchedulePanel"));
                 Assert.IsTrue(codexConnectionPathBox.IsAncestorOf(
                     codexConnectionPathPanel));
                 Assert.IsTrue(codexConnectionPathPanel.IsAncestorOf(

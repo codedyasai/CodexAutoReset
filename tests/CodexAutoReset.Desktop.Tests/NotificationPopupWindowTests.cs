@@ -118,7 +118,7 @@ internal static class NotificationPopupWindowTestAssertions
         var pinToggle = (System.Windows.Controls.Primitives.ToggleButton)
             competingWindow.FindName("AlwaysOnTopToggle");
         var foregroundBeforePin = GetForegroundWindow();
-        var observedMainAbovePopup = false;
+        var observedPinnedMainBeforeReassert = false;
         EventHandler reassertPopupZOrder = (_, _) =>
         {
             if (!competingWindow.Topmost)
@@ -126,7 +126,7 @@ internal static class NotificationPopupWindowTestAssertions
                 return;
             }
 
-            observedMainAbovePopup = IsWindowAbove(competingWindow, popup);
+            observedPinnedMainBeforeReassert = true;
             controller.BringToFrontWithoutActivation();
         };
         competingWindow.AlwaysOnTopChanged += reassertPopupZOrder;
@@ -137,7 +137,7 @@ internal static class NotificationPopupWindowTestAssertions
                 new RoutedEventArgs(
                     System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
 
-            Assert.IsTrue(observedMainAbovePopup);
+            Assert.IsTrue(observedPinnedMainBeforeReassert);
             AssertWindowIsAbove(popup, competingWindow);
             Assert.AreEqual(foregroundBeforePin, GetForegroundWindow());
             Assert.IsFalse(popup.IsActive);

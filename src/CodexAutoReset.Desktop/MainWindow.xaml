@@ -216,15 +216,31 @@
                         Style="{StaticResource CardBorderStyle}"
                         Margin="0,0,0,14">
                     <StackPanel>
-                        <Grid>
+                        <Grid x:Name="UsageHeaderGrid">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <TextBlock VerticalAlignment="Top"
                                        Style="{StaticResource SectionHeadingTextStyle}"
                                        Text="사용량" />
-                            <StackPanel Grid.Column="1"
+                            <TextBlock x:Name="LastCheckedInlineText"
+                                       Grid.Column="1"
+                                       Margin="12,0,0,0"
+                                       MaxWidth="260"
+                                       VerticalAlignment="Center"
+                                       HorizontalAlignment="Right"
+                                       Style="{StaticResource CaptionTextStyle}"
+                                       TextWrapping="NoWrap"
+                                       TextTrimming="CharacterEllipsis"
+                                       AutomationProperties.LiveSetting="Polite">
+                                <TextBlock.Text>
+                                    <Binding Path="LastCheckedStatus"
+                                             StringFormat="최근 사용량 확인 · {0}" />
+                                </TextBlock.Text>
+                            </TextBlock>
+                            <StackPanel Grid.Column="2"
                                         Margin="12,0,0,0"
                                         HorizontalAlignment="Center">
                                 <Button x:Name="RefreshButton"
@@ -304,6 +320,12 @@
                                          Value="{Binding WeeklyRemainingPercent, Mode=OneWay}"
                                          AutomationProperties.Name="주간 한도 잔여량 백분율"
                                          AutomationProperties.HelpText="0에서 100 사이의 주간 한도 잔여량입니다." />
+                            <TextBlock x:Name="WeeklyResetInlineText"
+                                       Style="{StaticResource CaptionTextStyle}"
+                                       FontWeight="SemiBold"
+                                       Text="{Binding WeeklyResetStatus}"
+                                       TextWrapping="Wrap"
+                                       AutomationProperties.LiveSetting="Polite" />
                         </StackPanel>
 
                         <Separator Margin="0,20"
@@ -329,15 +351,12 @@
                                              Value="{Binding FiveHourRemainingPercent, Mode=OneWay}"
                                              AutomationProperties.Name="5시간 한도 잔여량 백분율"
                                              AutomationProperties.HelpText="0에서 100 사이의 5시간 한도 잔여량입니다." />
-                                <TextBlock x:Name="LastCheckedInlineText"
+                                <TextBlock x:Name="FiveHourResetInlineText"
                                            Style="{StaticResource CaptionTextStyle}"
+                                           FontWeight="SemiBold"
+                                           Text="{Binding FiveHourResetStatus}"
                                            TextWrapping="Wrap"
-                                           AutomationProperties.LiveSetting="Polite">
-                                    <TextBlock.Text>
-                                        <Binding Path="LastCheckedStatus"
-                                                 StringFormat="최근 사용량 확인 · {0}" />
-                                    </TextBlock.Text>
-                                </TextBlock>
+                                           AutomationProperties.LiveSetting="Polite" />
                             </StackPanel>
                         </Border>
 
@@ -433,46 +452,56 @@
                                    Background="{StaticResource BorderBrush}" />
 
                         <Grid x:Name="UsageSummaryGrid">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="1" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
 
-                            <StackPanel Grid.Column="0"
-                                        Margin="0,0,20,0">
-                                <TextBlock Style="{StaticResource CaptionTextStyle}"
-                                           Text="사용 가능한 초기화권" />
-                                <TextBlock Margin="0,7,0,0"
+                            <TextBlock Style="{StaticResource CaptionTextStyle}"
+                                       Text="사용 가능한 초기화권" />
+
+                            <Grid Grid.Row="1" Margin="0,7,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="1" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+
+                                <TextBlock x:Name="CreditStatusValue"
+                                           MinWidth="52"
+                                           Margin="0,0,18,0"
+                                           VerticalAlignment="Top"
                                            FontSize="16"
                                            FontWeight="SemiBold"
                                            Text="{Binding CreditStatus}" />
-                            </StackPanel>
 
-                            <Border Grid.Column="1"
-                                    Background="{StaticResource BorderBrush}" />
+                                <Border Grid.Column="1"
+                                        Background="{StaticResource BorderBrush}" />
 
-                            <StackPanel x:Name="ResetSchedulePanel"
-                                        Grid.Column="2"
-                                        Margin="20,0,0,0">
-                                <TextBlock x:Name="ResetScheduleHeadingText"
-                                           Style="{StaticResource CaptionTextStyle}"
-                                           Text="다음 갱신 예정" />
-                                <TextBlock x:Name="WeeklyResetSummaryText"
-                                           Margin="0,7,0,0"
-                                           FontSize="16"
-                                           FontWeight="SemiBold"
-                                           Text="{Binding WeeklyResetStatus}"
-                                           TextWrapping="Wrap"
-                                           AutomationProperties.LiveSetting="Polite" />
-                                <TextBlock x:Name="FiveHourResetSummaryText"
-                                           Margin="0,4,0,0"
-                                           FontSize="16"
-                                           FontWeight="SemiBold"
-                                           Text="{Binding FiveHourResetStatus}"
-                                           TextWrapping="Wrap"
-                                           AutomationProperties.LiveSetting="Polite" />
-                            </StackPanel>
+                                <ScrollViewer x:Name="CreditExpirationScrollViewer"
+                                              Grid.Column="2"
+                                              Height="48"
+                                              Margin="18,0,0,0"
+                                              HorizontalScrollBarVisibility="Disabled"
+                                              VerticalScrollBarVisibility="Auto"
+                                              PanningMode="VerticalOnly"
+                                              Focusable="True"
+                                              AutomationProperties.Name="초기화권 만료일 목록"
+                                              AutomationProperties.HelpText="사용 가능한 초기화권별 만료일입니다. 마우스 휠 또는 방향키로 목록을 이동할 수 있습니다.">
+                                    <ItemsControl x:Name="CreditExpirationItemsControl"
+                                                  ItemsSource="{Binding CreditExpirationItems}"
+                                                  AutomationProperties.LiveSetting="Polite">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Margin="0,0,8,4"
+                                                           Style="{StaticResource CaptionTextStyle}"
+                                                           Text="{Binding}"
+                                                           TextWrapping="Wrap" />
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </ScrollViewer>
+                            </Grid>
                         </Grid>
                     </StackPanel>
                 </Border>

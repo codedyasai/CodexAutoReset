@@ -55,6 +55,8 @@ public sealed class MainWindowRenderingTests
                 app = new App();
                 app.InitializeComponent();
                 window = new MainWindow(viewModel);
+                var configuredWindowWidth = window.Width;
+                var configuredWindowHeight = window.Height;
                 window.ShowInTaskbar = false;
                 window.WindowStartupLocation = WindowStartupLocation.Manual;
                 window.Left = -32_000;
@@ -163,8 +165,8 @@ public sealed class MainWindowRenderingTests
                 Assert.AreEqual(0, Grid.GetRow(connectionCard));
                 Assert.AreEqual(1, Grid.GetRow(usageCard));
                 Assert.AreEqual(2, Grid.GetRow(settingsCard));
-                Assert.AreEqual(800, window.Width);
-                Assert.AreEqual(820, window.Height);
+                Assert.AreEqual(800, configuredWindowWidth);
+                Assert.AreEqual(820, configuredWindowHeight);
                 Assert.AreEqual(680, window.MinWidth);
                 Assert.AreEqual(620, window.MinHeight);
                 Assert.IsTrue(usageCard.IsAncestorOf(weeklyUsageSection));

@@ -141,20 +141,6 @@ ZIP 실행본이 함께 사용하므로 모든 복사본을 종료한 뒤에만 
 **Windows가 실행을 막음:** 파일명과 다운로드 출처를 확인하고, 이 저장소의
 Release에서 받은 파일이 아니면 실행하지 마세요.
 
-## 소스에서 빌드하기
-
-.NET 8.0.423 SDK가 필요합니다.
-
-```powershell
-dotnet restore CodexAutoReset.sln --locked-mode
-dotnet build CodexAutoReset.sln -c Release --no-restore
-dotnet test CodexAutoReset.sln -c Release --no-build
-dotnet format CodexAutoReset.sln --no-restore --verify-no-changes
-```
-
-설치 파일과 설치 없이 사용하는 ZIP 파일은 Inno Setup 6.7 이상을 설치한 뒤
-`.\scripts\build-release.ps1`로 만들 수 있습니다.
-
 ## 라이선스
 
 소스 코드는 [Apache License 2.0](LICENSE)으로 배포합니다. Windows 패키지에는

@@ -107,6 +107,104 @@ public sealed class GuardCycleExecutorTests
     }
 
     [TestMethod]
+    public async Task ExecuteAsync_SimultaneousWeeklyAndFiveHourResetQueuesOnlyWeeklyAlert()
+    {
+        var factory = new SequencedSnapshotClientFactory(
+        [
+            CreateSnapshot(
+                weeklyUsedPercent: 60,
+                fiveHourUsedPercent: 60,
+                Now,
+                Now.AddDays(2),
+                Now.AddHours(5)),
+            CreateSnapshot(
+                weeklyUsedPercent: 0,
+                fiveHourUsedPercent: 0,
+                Now.AddMinutes(1),
+                Now.AddDays(7),
+                Now.AddHours(5).AddMinutes(1)),
+        ]);
+        var weeklyTracker = new JsonWeeklyUsageResetTracker(
+            paths.UsageResetStateFile);
+        var supplementalTracker = new JsonSupplementalNotificationTracker(
+            paths.SupplementalNotificationStateFile);
+        var executor = new GuardCycleExecutor(
+            paths,
+            factory,
+            new TestSecretProtector(),
+            AppServerLiveResetFailureClassifier.Instance,
+            new FixedTimeProvider(Now),
+            weeklyTracker,
+            supplementalTracker);
+
+        _ = await executor.ExecuteAsync(
+            GuardSettings.Default,
+            CancellationToken.None);
+        var detected = await executor.ExecuteAsync(
+            GuardSettings.Default,
+            CancellationToken.None);
+
+        Assert.AreEqual(100, detected.Evaluation.FiveHour?.RemainingPercent);
+        Assert.AreEqual(
+            1,
+            (await weeklyTracker.LoadPendingNotificationsAsync(
+                CancellationToken.None)).Count);
+        Assert.IsFalse(
+            (await supplementalTracker.LoadPendingNotificationsAsync(
+                CancellationToken.None)).Any(notification =>
+                    notification.Kind
+                        != SupplementalNotificationKind.CreditGranted));
+    }
+
+    [TestMethod]
+    public async Task ExecuteAsync_DisabledWeeklyAlertKeepsSimultaneousFiveHourAlert()
+    {
+        var factory = new SequencedSnapshotClientFactory(
+        [
+            CreateSnapshot(
+                weeklyUsedPercent: 60,
+                fiveHourUsedPercent: 60,
+                Now,
+                Now.AddDays(2),
+                Now.AddHours(5)),
+            CreateSnapshot(
+                weeklyUsedPercent: 0,
+                fiveHourUsedPercent: 0,
+                Now.AddMinutes(1),
+                Now.AddDays(7),
+                Now.AddHours(5).AddMinutes(1)),
+        ]);
+        var supplementalTracker = new JsonSupplementalNotificationTracker(
+            paths.SupplementalNotificationStateFile);
+        var executor = new GuardCycleExecutor(
+            paths,
+            factory,
+            new TestSecretProtector(),
+            AppServerLiveResetFailureClassifier.Instance,
+            new FixedTimeProvider(Now),
+            new JsonWeeklyUsageResetTracker(paths.UsageResetStateFile),
+            supplementalTracker);
+        var settings = GuardSettings.Default with
+        {
+            NotifyOnWeeklyUsageReset = false,
+            NotifyOnFiveHourUsageReset = true,
+        };
+
+        _ = await executor.ExecuteAsync(settings, CancellationToken.None);
+        var detected = await executor.ExecuteAsync(
+            settings,
+            CancellationToken.None);
+
+        Assert.AreEqual(100, detected.Evaluation.FiveHour?.RemainingPercent);
+        Assert.AreEqual(
+            1,
+            (await supplementalTracker.LoadPendingNotificationsAsync(
+                CancellationToken.None)).Count(notification =>
+                    notification.Kind
+                        != SupplementalNotificationKind.CreditGranted));
+    }
+
+    [TestMethod]
     public async Task ExecuteAsync_DetectedResetSettlesAcrossRestartBeforeConsume()
     {
         var previousResetAt = Now.AddDays(2);
@@ -671,13 +769,28 @@ public sealed class GuardCycleExecutorTests
     private static AccountRateLimits CreateSnapshot(
         double weeklyUsedPercent,
         DateTimeOffset observedAt,
-        DateTimeOffset weeklyResetAt)
+        DateTimeOffset weeklyResetAt) => CreateSnapshot(
+            weeklyUsedPercent,
+            fiveHourUsedPercent: 20,
+            observedAt,
+            weeklyResetAt,
+            observedAt.AddHours(1));
+
+    private static AccountRateLimits CreateSnapshot(
+        double weeklyUsedPercent,
+        double fiveHourUsedPercent,
+        DateTimeOffset observedAt,
+        DateTimeOffset weeklyResetAt,
+        DateTimeOffset fiveHourResetAt)
     {
         var observedAtUnix = observedAt.ToUnixTimeSeconds();
         var snapshot = new RateLimitSnapshot(
             "codex",
             "Codex",
-            new RateLimitWindow(20, 300, observedAtUnix + 60 * 60),
+            new RateLimitWindow(
+                fiveHourUsedPercent,
+                300,
+                fiveHourResetAt.ToUnixTimeSeconds()),
             new RateLimitWindow(
                 weeklyUsedPercent,
                 10_080,

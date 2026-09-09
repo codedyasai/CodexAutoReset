@@ -9,6 +9,9 @@ public sealed record RuntimePaths
         LiveStateFile = Path.Combine(RootDirectory, "live-state.json");
         LiveSafetyBlockFile = Path.Combine(RootDirectory, "live-safety-block.json");
         UsageResetStateFile = Path.Combine(RootDirectory, "usage-reset-state.json");
+        SupplementalNotificationStateFile = Path.Combine(
+            RootDirectory,
+            "supplemental-notification-state.json");
         CompatibilityNotificationStateFile = Path.Combine(
             RootDirectory,
             "compatibility-notification-state.json");
@@ -25,6 +28,8 @@ public sealed record RuntimePaths
     public string LiveSafetyBlockFile { get; }
 
     public string UsageResetStateFile { get; }
+
+    public string SupplementalNotificationStateFile { get; }
 
     public string CompatibilityNotificationStateFile { get; }
 

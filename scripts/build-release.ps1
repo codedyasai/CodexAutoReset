@@ -2,7 +2,7 @@
 param(
     [Parameter()]
     [ValidatePattern('^\d+\.\d+\.\d+$')]
-    [string]$Version = '0.3.9',
+    [string]$Version = '0.4.0',
 
     [Parameter()]
     [string]$InnoCompilerPath
@@ -127,6 +127,8 @@ $forbiddenFiles = Get-ChildItem -LiteralPath $publishDirectory -Recurse -File |
             'live-safety-block.json',
             'live-safety-block.json.tmp',
             'usage-reset-state.json',
+            'supplemental-notification-state.json',
+            'supplemental-notification-state.json.tmp',
             'compatibility-notification-state.json',
             'compatibility-notification-state.json.tmp',
             'instance.lock')

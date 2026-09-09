@@ -9,6 +9,7 @@ public sealed class NotificationPopupController : INotificationPopupPresenter
 {
     private readonly Dispatcher dispatcher;
     private readonly Action? openApp;
+    private readonly DispatcherTimer topmostTimer;
     private NotificationPopupWindow? window;
     private Func<Task<bool>>? currentConfirmation;
     private string? currentNotificationId;
@@ -25,6 +26,12 @@ public sealed class NotificationPopupController : INotificationPopupPresenter
                 ? applicationDispatcher
                 : Dispatcher.CurrentDispatcher;
         this.openApp = openApp;
+        topmostTimer = new DispatcherTimer(
+            TimeSpan.FromSeconds(1),
+            DispatcherPriority.Background,
+            (_, _) => BringToFrontCore(),
+            dispatcher);
+        topmostTimer.Stop();
     }
 
     public bool IsVisible
@@ -137,7 +144,7 @@ public sealed class NotificationPopupController : INotificationPopupPresenter
             targetMonitor = NotificationPopupPlacement.Position(
                 window,
                 targetMonitor,
-                bringToFront: false);
+                bringToFront: true);
             return;
         }
 
@@ -162,6 +169,7 @@ public sealed class NotificationPopupController : INotificationPopupPresenter
             targetMonitor,
             bringToFront: false);
         window.Opacity = 1;
+        topmostTimer.Start();
     }
 
     private async void OnConfirmationRequested(
@@ -228,6 +236,7 @@ public sealed class NotificationPopupController : INotificationPopupPresenter
 
     private void CloseWindowCore()
     {
+        topmostTimer.Stop();
         var closing = window;
         window = null;
         currentConfirmation = null;

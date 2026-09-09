@@ -366,10 +366,24 @@ public sealed class GuardMonitorService : IAsyncDisposable
         SettingsUpdateService settingsUpdateService,
         bool enabled,
         CancellationToken cancellationToken = default)
+        => SetNotificationPreferenceAsync(
+            settingsUpdateService,
+            NotificationPreference.WeeklyUsageReset,
+            enabled,
+            cancellationToken);
+
+    public Task<GuardSettings> SetNotificationPreferenceAsync(
+        SettingsUpdateService settingsUpdateService,
+        NotificationPreference preference,
+        bool enabled,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(settingsUpdateService);
         return ApplySettingsPatchAsync(
-            token => settingsUpdateService.SaveNotifyOnUsageResetAsync(enabled, token),
+            token => settingsUpdateService.SaveNotificationPreferenceAsync(
+                preference,
+                enabled,
+                token),
             requestRefresh: false,
             cancellationToken);
     }

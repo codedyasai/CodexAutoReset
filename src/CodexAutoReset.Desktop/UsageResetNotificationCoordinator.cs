@@ -1,47 +1,60 @@
 using System.Windows.Threading;
+using CodexAutoReset.Core;
 using CodexAutoReset.Runtime;
 
 namespace CodexAutoReset.Desktop;
 
 public sealed class UsageResetNotificationCoordinator : IAsyncDisposable
 {
-    private readonly JsonWeeklyUsageResetTracker tracker;
+    private readonly JsonWeeklyUsageResetTracker weeklyTracker;
+    private readonly JsonSupplementalNotificationTracker? supplementalTracker;
     private readonly INotificationPopupPresenter presenter;
     private readonly TimeProvider timeProvider;
     private readonly SemaphoreSlim gate = new(1, 1);
-    private bool desiredNotificationsEnabled;
-    private bool notificationsEnabled;
-    private bool suppressionRetryRequired;
-    private DateTimeOffset? suppressionCutoffAt;
+    private bool weeklyEnabled;
+    private bool fiveHourEnabled;
+    private bool creditGrantedEnabled;
+    private readonly Dictionary<NotificationPreference, DateTimeOffset>
+        suppressionCutoffs = [];
     private bool disposed;
-    private string? displayedEventId;
+    private DisplayedNotification? displayed;
+    private SelectedNotification? displayedSelection;
 
     public UsageResetNotificationCoordinator(
-        JsonWeeklyUsageResetTracker tracker,
+        JsonWeeklyUsageResetTracker weeklyTracker,
         INotificationPopupPresenter presenter,
+        JsonSupplementalNotificationTracker? supplementalTracker = null,
         TimeProvider? timeProvider = null)
     {
-        this.tracker = tracker
-            ?? throw new ArgumentNullException(nameof(tracker));
+        this.weeklyTracker = weeklyTracker
+            ?? throw new ArgumentNullException(nameof(weeklyTracker));
         this.presenter = presenter
             ?? throw new ArgumentNullException(nameof(presenter));
+        this.supplementalTracker = supplementalTracker;
         this.timeProvider = timeProvider ?? TimeProvider.System;
     }
 
-    public async Task InitializeAsync(
-        bool enabled,
-        CancellationToken cancellationToken)
+    public UsageResetNotificationCoordinator(
+        JsonWeeklyUsageResetTracker weeklyTracker,
+        INotificationPopupPresenter presenter,
+        TimeProvider timeProvider)
+        : this(weeklyTracker, presenter, supplementalTracker: null, timeProvider)
     {
-        await SetEnabledAsync(enabled, cancellationToken);
     }
 
-    public async Task SetEnabledAsync(
-        bool enabled,
+    public Task InitializeAsync(bool enabled, CancellationToken cancellationToken) =>
+        InitializeAsync(
+            weeklyEnabled: enabled,
+            fiveHourEnabled: false,
+            creditGrantedEnabled: false,
+            cancellationToken);
+
+    public async Task InitializeAsync(
+        bool weeklyEnabled,
+        bool fiveHourEnabled,
+        bool creditGrantedEnabled,
         CancellationToken cancellationToken)
     {
-        NotificationPopupRequest? request = null;
-        var closePopup = false;
-
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -50,44 +63,105 @@ public sealed class UsageResetNotificationCoordinator : IAsyncDisposable
                 return;
             }
 
-            var wasDesiredEnabled = desiredNotificationsEnabled;
-            desiredNotificationsEnabled = enabled;
-            if (!enabled)
+            this.weeklyEnabled = weeklyEnabled;
+            this.fiveHourEnabled = fiveHourEnabled;
+            this.creditGrantedEnabled = creditGrantedEnabled;
+            var now = timeProvider.GetUtcNow();
+            if (!weeklyEnabled)
             {
-                notificationsEnabled = false;
-                var suppressionPersisted =
-                    await PersistSuppressionAsync(
-                        advanceCutoff: true,
-                        cancellationToken).ConfigureAwait(false);
-                suppressionRetryRequired = !suppressionPersisted;
-                if (suppressionPersisted)
+                var persisted = await weeklyTracker.SuppressPendingNotificationsThroughAsync(
+                    now,
+                    now,
+                    cancellationToken).ConfigureAwait(false);
+                if (!persisted)
                 {
-                    displayedEventId = null;
-                    closePopup = true;
+                    suppressionCutoffs[NotificationPreference.WeeklyUsageReset] = now;
                 }
             }
-            else
-            {
-                if (suppressionRetryRequired)
-                {
-                    var suppressionPersisted =
-                        await PersistSuppressionAsync(
-                            advanceCutoff: !wasDesiredEnabled,
-                            cancellationToken).ConfigureAwait(false);
-                    if (!suppressionPersisted)
-                    {
-                        notificationsEnabled = false;
-                        return;
-                    }
 
-                    suppressionRetryRequired = false;
-                    displayedEventId = null;
-                    closePopup = true;
+            if (supplementalTracker is not null)
+            {
+                if (!fiveHourEnabled)
+                {
+                    var persisted = await supplementalTracker
+                        .SuppressPendingNotificationsThroughAsync(
+                            NotificationPreference.FiveHourUsageReset,
+                            now,
+                            now,
+                            cancellationToken).ConfigureAwait(false);
+                    if (!persisted)
+                    {
+                        suppressionCutoffs[
+                            NotificationPreference.FiveHourUsageReset] = now;
+                    }
                 }
 
-                notificationsEnabled = true;
-                request = await SelectNextRequestAsync(cancellationToken)
-                    .ConfigureAwait(false);
+                if (!creditGrantedEnabled)
+                {
+                    var persisted = await supplementalTracker
+                        .SuppressPendingNotificationsThroughAsync(
+                            NotificationPreference.CreditGranted,
+                            now,
+                            now,
+                            cancellationToken).ConfigureAwait(false);
+                    if (!persisted)
+                    {
+                        suppressionCutoffs[NotificationPreference.CreditGranted] = now;
+                    }
+                }
+            }
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        await RefreshAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public Task SetEnabledAsync(bool enabled, CancellationToken cancellationToken) =>
+        SetPreferenceEnabledAsync(
+            NotificationPreference.WeeklyUsageReset,
+            enabled,
+            cancellationToken);
+
+    public async Task SetPreferenceEnabledAsync(
+        NotificationPreference preference,
+        bool enabled,
+        CancellationToken cancellationToken)
+    {
+        var closePopup = false;
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (disposed)
+            {
+                return;
+            }
+
+            SetPreference(preference, enabled);
+            if (!enabled)
+            {
+                suppressionCutoffs[preference] = timeProvider.GetUtcNow();
+            }
+
+            if (suppressionCutoffs.TryGetValue(preference, out var cutoff))
+            {
+                var now = timeProvider.GetUtcNow();
+                var persisted = await SuppressPreferenceAsync(
+                    preference,
+                    cutoff,
+                    now,
+                    cancellationToken).ConfigureAwait(false);
+                if (persisted)
+                {
+                    suppressionCutoffs.Remove(preference);
+                    if (displayed?.Preference == preference)
+                    {
+                        displayed = null;
+                        closePopup = true;
+                    }
+                }
             }
         }
         finally
@@ -100,21 +174,15 @@ public sealed class UsageResetNotificationCoordinator : IAsyncDisposable
             presenter.CloseAfterSuppression();
         }
 
-        if (request is not null)
-        {
-            await ShowIfCurrentAsync(request, cancellationToken)
-                .ConfigureAwait(false);
-        }
+        await RefreshAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public void RequestRefresh()
     {
-        if (disposed)
+        if (!disposed)
         {
-            return;
+            _ = RefreshIgnoringFailureAsync();
         }
-
-        _ = RefreshIgnoringFailureAsync();
     }
 
     public void BringPendingToFront()
@@ -130,9 +198,8 @@ public sealed class UsageResetNotificationCoordinator : IAsyncDisposable
 
     public async Task RefreshAsync(CancellationToken cancellationToken)
     {
-        NotificationPopupRequest? request = null;
+        SelectedNotification? next = null;
         var closePopup = false;
-
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -141,42 +208,32 @@ public sealed class UsageResetNotificationCoordinator : IAsyncDisposable
                 return;
             }
 
-            if (!desiredNotificationsEnabled)
+            foreach (var pendingSuppression in suppressionCutoffs.ToArray())
             {
-                notificationsEnabled = false;
-                var suppressionPersisted =
-                    await PersistSuppressionAsync(
-                        advanceCutoff: true,
-                        cancellationToken).ConfigureAwait(false);
-                suppressionRetryRequired = !suppressionPersisted;
-                if (suppressionPersisted)
+                var persisted = await SuppressPreferenceAsync(
+                    pendingSuppression.Key,
+                    pendingSuppression.Value,
+                    timeProvider.GetUtcNow(),
+                    cancellationToken).ConfigureAwait(false);
+                if (persisted)
                 {
-                    displayedEventId = null;
-                    closePopup = true;
+                    suppressionCutoffs.Remove(pendingSuppression.Key);
+                    if (displayed?.Preference == pendingSuppression.Key)
+                    {
+                        displayed = null;
+                        closePopup = true;
+                    }
                 }
             }
-            else
+
+            next = await SelectNextAsync(cancellationToken).ConfigureAwait(false);
+            if (next is not null)
             {
-                if (suppressionRetryRequired)
-                {
-                    var suppressionPersisted =
-                        await PersistSuppressionAsync(
-                            advanceCutoff: false,
-                            cancellationToken).ConfigureAwait(false);
-                    if (!suppressionPersisted)
-                    {
-                        notificationsEnabled = false;
-                        return;
-                    }
-
-                    suppressionRetryRequired = false;
-                    displayedEventId = null;
-                    closePopup = true;
-                }
-
-                notificationsEnabled = true;
-                request = await SelectNextRequestAsync(cancellationToken)
-                    .ConfigureAwait(false);
+                displayedSelection = next;
+                displayed = new DisplayedNotification(
+                    next.Request.NotificationId,
+                    next.Source,
+                    next.Preference);
             }
         }
         finally
@@ -189,10 +246,11 @@ public sealed class UsageResetNotificationCoordinator : IAsyncDisposable
             presenter.CloseAfterSuppression();
         }
 
-        if (request is not null)
+        if (next is not null)
         {
-            await ShowIfCurrentAsync(request, cancellationToken)
-                .ConfigureAwait(false);
+            presenter.Show(
+                next.Request,
+                () => ConfirmAsync(next.Request.NotificationId));
         }
     }
 
@@ -207,7 +265,7 @@ public sealed class UsageResetNotificationCoordinator : IAsyncDisposable
             }
 
             disposed = true;
-            displayedEventId = null;
+            displayed = null;
             presenter.Dispose();
         }
         finally
@@ -216,79 +274,92 @@ public sealed class UsageResetNotificationCoordinator : IAsyncDisposable
         }
     }
 
-    private async Task<NotificationPopupRequest?> SelectNextRequestAsync(
+    private async Task<SelectedNotification?> SelectNextAsync(
         CancellationToken cancellationToken)
     {
-        var pending = await tracker.LoadPendingNotificationsAsync(
-            cancellationToken).ConfigureAwait(false);
-        if (displayedEventId is not null && presenter.IsVisible)
-        {
-            // A transient state read can surface as an empty pending list.
-            // Keep the visible notification and its confirmation callback
-            // intact so the user can retry after local storage recovers.
-            return null;
-        }
-
-        displayedEventId = null;
-        var next = pending.FirstOrDefault();
-        if (next is null)
+        if (suppressionCutoffs.Count > 0)
         {
             return null;
         }
 
-        displayedEventId = next.EventId;
-        return NotificationPopupRequest.FromUsageReset(next.Detection);
-    }
-
-    private async Task<bool> PersistSuppressionAsync(
-        bool advanceCutoff,
-        CancellationToken cancellationToken)
-    {
-        var now = timeProvider.GetUtcNow();
-        if (advanceCutoff || suppressionCutoffAt is null)
+        var candidates = new List<SelectedNotification>();
+        if (weeklyEnabled)
         {
-            suppressionCutoffAt = now;
-        }
-
-        var persisted =
-            await tracker.SuppressPendingNotificationsThroughAsync(
-                suppressionCutoffAt.Value,
-                now,
+            var weekly = await weeklyTracker.LoadPendingNotificationsAsync(
                 cancellationToken).ConfigureAwait(false);
-        if (persisted)
-        {
-            suppressionCutoffAt = null;
+            candidates.AddRange(weekly.Select(item => new SelectedNotification(
+                NotificationPopupRequest.FromUsageReset(item.Detection),
+                NotificationSource.Weekly,
+                NotificationPreference.WeeklyUsageReset,
+                item.Detection.DetectedAt,
+                item.Detection.Kind == WeeklyUsageResetKind.Early)));
         }
 
-        return persisted;
-    }
-
-    private async Task ShowIfCurrentAsync(
-        NotificationPopupRequest request,
-        CancellationToken cancellationToken)
-    {
-        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
+        if (supplementalTracker is not null
+            && (fiveHourEnabled || creditGrantedEnabled))
         {
-            if (!disposed
-                && notificationsEnabled
-                && string.Equals(
-                    displayedEventId,
-                    request.NotificationId,
-                    StringComparison.Ordinal))
+            var supplemental = await supplementalTracker
+                .LoadPendingNotificationsAsync(cancellationToken)
+                .ConfigureAwait(false);
+            foreach (var item in supplemental)
             {
-                presenter.Show(
-                    request,
-                    () => ConfirmAsync(request.NotificationId));
+                var preference = item.Kind == SupplementalNotificationKind.CreditGranted
+                    ? NotificationPreference.CreditGranted
+                    : NotificationPreference.FiveHourUsageReset;
+                if (IsPreferenceEnabled(preference))
+                {
+                    candidates.Add(new SelectedNotification(
+                        NotificationPopupRequest.FromSupplemental(item),
+                        NotificationSource.Supplemental,
+                        preference,
+                        item.DetectedAt,
+                        item.Kind == SupplementalNotificationKind.FiveHourEarlyReset));
+                }
             }
         }
-        catch (ObjectDisposedException)
+
+        if (displayed is not null
+            && displayedSelection is { } visible
+            && IsPreferenceEnabled(visible.Preference)
+            && !candidates.Any(item => item.Request.NotificationId == visible.Request.NotificationId))
         {
+            // A temporarily unreadable state file must not displace an unconfirmed alert.
+            candidates.Add(visible);
         }
-        finally
+
+        var resets = candidates
+            .Where(item => item.Preference != NotificationPreference.CreditGranted)
+            .OrderByDescending(item => item.IsEarly)
+            .ThenByDescending(item => item.DetectedAt)
+            .ThenBy(item => item.Preference == NotificationPreference.WeeklyUsageReset ? 0 : 1)
+            .ThenBy(item => item.Request.NotificationId, StringComparer.Ordinal)
+            .ToArray();
+        foreach (var group in resets.Skip(1).GroupBy(item => item.Source))
         {
-            gate.Release();
+            var ids = group.Select(item => item.Request.NotificationId)
+                .ToHashSet(StringComparer.Ordinal);
+            var persisted = group.Key == NotificationSource.Weekly
+                ? await weeklyTracker.SuppressNotificationsAsync(
+                    ids, timeProvider.GetUtcNow(), cancellationToken).ConfigureAwait(false)
+                : await supplementalTracker!.SuppressNotificationsAsync(
+                    ids, timeProvider.GetUtcNow(), cancellationToken).ConfigureAwait(false);
+            if (!persisted)
+            {
+                return null;
+            }
         }
+
+        // Credit grants retain their independent acknowledgement queue.
+        var next = resets.FirstOrDefault() ?? candidates
+            .OrderBy(item => item.DetectedAt)
+            .ThenBy(item => item.Request.NotificationId, StringComparer.Ordinal)
+            .FirstOrDefault();
+        if (next is null || displayed?.EventId == next.Request.NotificationId && presenter.IsVisible)
+        {
+            return null;
+        }
+
+        return next;
     }
 
     private async Task<bool> ConfirmAsync(string eventId)
@@ -298,21 +369,25 @@ public sealed class UsageResetNotificationCoordinator : IAsyncDisposable
         try
         {
             if (disposed
-                || !string.Equals(
-                    displayedEventId,
-                    eventId,
-                    StringComparison.Ordinal))
+                || displayed is not { } current
+                || !string.Equals(current.EventId, eventId, StringComparison.Ordinal))
             {
                 return false;
             }
 
-            acknowledged = await tracker.AcknowledgeNotificationAsync(
-                eventId,
-                timeProvider.GetUtcNow(),
-                CancellationToken.None).ConfigureAwait(false);
+            acknowledged = current.Source == NotificationSource.Weekly
+                ? await weeklyTracker.AcknowledgeNotificationAsync(
+                    eventId,
+                    timeProvider.GetUtcNow(),
+                    CancellationToken.None).ConfigureAwait(false)
+                : supplementalTracker is not null
+                    && await supplementalTracker.AcknowledgeNotificationAsync(
+                        eventId,
+                        timeProvider.GetUtcNow(),
+                        CancellationToken.None).ConfigureAwait(false);
             if (acknowledged)
             {
-                displayedEventId = null;
+                displayed = null;
             }
         }
         finally
@@ -328,6 +403,55 @@ public sealed class UsageResetNotificationCoordinator : IAsyncDisposable
         return acknowledged;
     }
 
+    private Task<bool> SuppressPreferenceAsync(
+        NotificationPreference preference,
+        DateTimeOffset cutoff,
+        DateTimeOffset now,
+        CancellationToken cancellationToken) => preference switch
+        {
+            NotificationPreference.WeeklyUsageReset =>
+                weeklyTracker.SuppressPendingNotificationsThroughAsync(
+                    cutoff,
+                    now,
+                    cancellationToken),
+            NotificationPreference.FiveHourUsageReset
+                or NotificationPreference.CreditGranted
+                    when supplementalTracker is not null =>
+                supplementalTracker.SuppressPendingNotificationsThroughAsync(
+                    preference,
+                    cutoff,
+                    now,
+                    cancellationToken),
+            _ => Task.FromResult(true),
+        };
+
+    private void SetPreference(NotificationPreference preference, bool enabled)
+    {
+        switch (preference)
+        {
+            case NotificationPreference.WeeklyUsageReset:
+                weeklyEnabled = enabled;
+                break;
+            case NotificationPreference.FiveHourUsageReset:
+                fiveHourEnabled = enabled;
+                break;
+            case NotificationPreference.CreditGranted:
+                creditGrantedEnabled = enabled;
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(preference));
+        }
+    }
+
+    private bool IsPreferenceEnabled(NotificationPreference preference) =>
+        preference switch
+        {
+            NotificationPreference.WeeklyUsageReset => weeklyEnabled,
+            NotificationPreference.FiveHourUsageReset => fiveHourEnabled,
+            NotificationPreference.CreditGranted => creditGrantedEnabled,
+            _ => false,
+        };
+
     private void ScheduleRefresh()
     {
         var dispatcher = System.Windows.Application.Current?.Dispatcher;
@@ -335,13 +459,12 @@ public sealed class UsageResetNotificationCoordinator : IAsyncDisposable
             && !dispatcher.HasShutdownStarted
             && !dispatcher.HasShutdownFinished)
         {
-            _ = dispatcher.BeginInvoke(
-                RequestRefresh,
-                DispatcherPriority.ContextIdle);
-            return;
+            _ = dispatcher.BeginInvoke(RequestRefresh, DispatcherPriority.ContextIdle);
         }
-
-        _ = Task.Run(RefreshIgnoringFailureAsync);
+        else
+        {
+            _ = Task.Run(RefreshIgnoringFailureAsync);
+        }
     }
 
     private async Task RefreshIgnoringFailureAsync()
@@ -351,10 +474,26 @@ public sealed class UsageResetNotificationCoordinator : IAsyncDisposable
             await RefreshAsync(CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not (
-            OutOfMemoryException
-                or StackOverflowException
-                or AccessViolationException))
+            OutOfMemoryException or StackOverflowException or AccessViolationException))
         {
         }
     }
+
+    private enum NotificationSource
+    {
+        Weekly,
+        Supplemental,
+    }
+
+    private sealed record DisplayedNotification(
+        string EventId,
+        NotificationSource Source,
+        NotificationPreference Preference);
+
+    private sealed record SelectedNotification(
+        NotificationPopupRequest Request,
+        NotificationSource Source,
+        NotificationPreference Preference,
+        DateTimeOffset DetectedAt,
+        bool IsEarly);
 }

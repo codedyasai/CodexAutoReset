@@ -1,7 +1,7 @@
 <Window x:Class="CodexAutoReset.Desktop.NotificationPopupWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="CodexAutoReset 사용량 초기화 알림"
+        Title="CodexAutoReset 알림"
         Width="420"
         MinWidth="360"
         MaxWidth="480"
@@ -19,7 +19,7 @@
         SnapsToDevicePixels="True"
         TextOptions.TextFormattingMode="Display"
         KeyboardNavigation.TabNavigation="Cycle"
-        AutomationProperties.Name="CodexAutoReset 사용량 초기화 알림">
+        AutomationProperties.Name="CodexAutoReset 알림">
     <Window.Resources>
         <SolidColorBrush x:Key="PopupBackgroundBrush" Color="#F8F2E8" />
         <SolidColorBrush x:Key="PopupCardBrush" Color="#FFFFFF" />

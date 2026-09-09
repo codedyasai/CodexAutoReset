@@ -123,9 +123,13 @@ public partial class App : System.Windows.Application
 
             var usageResetTracker = new JsonWeeklyUsageResetTracker(
                 paths.UsageResetStateFile);
+            var supplementalNotificationTracker =
+                new JsonSupplementalNotificationTracker(
+                    paths.SupplementalNotificationStateFile);
             var cycleExecutor = new GuardCycleExecutor(
                 paths,
-                usageResetTracker);
+                usageResetTracker,
+                supplementalNotificationTracker);
             monitor = new GuardMonitorService(
                 settingsStore,
                 cycleExecutor,
@@ -139,7 +143,7 @@ public partial class App : System.Windows.Application
                 settings);
             var window = new MainWindow(
                 viewModel,
-                SetUsageResetNotificationsEnabledAsync);
+                SetNotificationPreferenceEnabledAsync);
             MainWindow = window;
             activationChannel = SingleInstanceActivationChannel.TryStart(paths);
             activationChannel?.SetActivationHandler(
@@ -152,9 +156,12 @@ public partial class App : System.Windows.Application
             usageResetNotificationCoordinator =
                 new UsageResetNotificationCoordinator(
                     usageResetTracker,
-                    popupPresenter);
+                    popupPresenter,
+                    supplementalNotificationTracker);
             await usageResetNotificationCoordinator.InitializeAsync(
-                settings.NotifyOnUsageReset,
+                settings.NotifyOnWeeklyUsageReset,
+                settings.NotifyOnFiveHourUsageReset,
+                settings.NotifyOnCreditGranted,
                 CancellationToken.None);
             window.Activated += OnMainWindowActivated;
             window.AlwaysOnTopChanged += OnMainWindowAlwaysOnTopChanged;
@@ -302,8 +309,11 @@ public partial class App : System.Windows.Application
         Shutdown(exitCode);
     }
 
-    private Task SetUsageResetNotificationsEnabledAsync(bool enabled) =>
-        usageResetNotificationCoordinator?.SetEnabledAsync(
+    private Task SetNotificationPreferenceEnabledAsync(
+        NotificationPreference preference,
+        bool enabled) =>
+        usageResetNotificationCoordinator?.SetPreferenceEnabledAsync(
+            preference,
             enabled,
             CancellationToken.None)
         ?? Task.CompletedTask;

@@ -274,7 +274,7 @@ public sealed class MainWindowViewModelTests
         Assert.IsFalse(persisted.StartWithWindows);
         Assert.IsNull(persisted.CodexExecutablePath);
         var persistedJson = await File.ReadAllTextAsync(paths.SettingsFile);
-        StringAssert.Contains(persistedJson, "\"schemaVersion\": 6");
+        StringAssert.Contains(persistedJson, "\"schemaVersion\": 7");
         Assert.IsFalse(
             persistedJson.Contains(
                 "pollIntervalMinutes",
@@ -964,10 +964,20 @@ public sealed class MainWindowViewModelTests
         var observedAt = monitor.CurrentSnapshot.ObservedAt;
 
         Assert.IsTrue(await viewModel.SetNotifyOnUsageResetAsync(enabled: false));
+        Assert.IsTrue(await viewModel.SetNotificationPreferenceAsync(
+            NotificationPreference.FiveHourUsageReset,
+            enabled: false));
+        Assert.IsTrue(await viewModel.SetNotificationPreferenceAsync(
+            NotificationPreference.CreditGranted,
+            enabled: false));
 
         Assert.IsFalse(viewModel.NotifyOnUsageReset);
-        Assert.IsFalse(
-            (await settingsStore.LoadAsync(CancellationToken.None)).NotifyOnUsageReset);
+        Assert.IsFalse(viewModel.NotifyOnFiveHourUsageReset);
+        Assert.IsFalse(viewModel.NotifyOnCreditGranted);
+        var saved = await settingsStore.LoadAsync(CancellationToken.None);
+        Assert.IsFalse(saved.NotifyOnUsageReset);
+        Assert.IsFalse(saved.NotifyOnFiveHourUsageReset);
+        Assert.IsFalse(saved.NotifyOnCreditGranted);
         Assert.AreEqual(58, monitor.CurrentSnapshot.Weekly?.RemainingPercent);
         Assert.AreEqual(65, monitor.CurrentSnapshot.FiveHour?.RemainingPercent);
         Assert.AreEqual(observedAt, monitor.CurrentSnapshot.ObservedAt);

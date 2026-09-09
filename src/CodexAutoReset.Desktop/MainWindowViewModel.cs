@@ -23,7 +23,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     private string? codexExecutablePath;
     private bool automationEnabled;
     private bool fiveHourAutomationEnabled;
-    private bool notifyOnUsageReset;
+    private bool notifyOnWeeklyUsageReset;
+    private bool notifyOnFiveHourUsageReset;
+    private bool notifyOnCreditGranted;
     private bool startWithWindows;
     private string weeklyRemainingText = "-";
     private double weeklyRemainingPercent;
@@ -68,7 +70,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             initialSettings.IsAutomationEnabled(TriggerLimit.Weekly);
         fiveHourAutomationEnabled =
             initialSettings.IsAutomationEnabled(TriggerLimit.FiveHour);
-        notifyOnUsageReset = initialSettings.NotifyOnUsageReset;
+        notifyOnWeeklyUsageReset = initialSettings.NotifyOnWeeklyUsageReset;
+        notifyOnFiveHourUsageReset = initialSettings.NotifyOnFiveHourUsageReset;
+        notifyOnCreditGranted = initialSettings.NotifyOnCreditGranted;
         startWithWindows = initialSettings.StartWithWindows;
         currentSnapshot = monitor.CurrentSnapshot;
 
@@ -155,8 +159,32 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
 
     public bool NotifyOnUsageReset
     {
-        get => notifyOnUsageReset;
-        set => SetField(ref notifyOnUsageReset, value);
+        get => NotifyOnWeeklyUsageReset;
+        set => NotifyOnWeeklyUsageReset = value;
+    }
+
+    public bool NotifyOnWeeklyUsageReset
+    {
+        get => notifyOnWeeklyUsageReset;
+        set
+        {
+            if (SetField(ref notifyOnWeeklyUsageReset, value))
+            {
+                OnPropertyChanged(nameof(NotifyOnUsageReset));
+            }
+        }
+    }
+
+    public bool NotifyOnFiveHourUsageReset
+    {
+        get => notifyOnFiveHourUsageReset;
+        set => SetField(ref notifyOnFiveHourUsageReset, value);
+    }
+
+    public bool NotifyOnCreditGranted
+    {
+        get => notifyOnCreditGranted;
+        set => SetField(ref notifyOnCreditGranted, value);
     }
 
     public bool StartWithWindows
@@ -550,31 +578,43 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
     }
 
     public async Task<bool> SetNotifyOnUsageResetAsync(bool enabled)
+        => await SetNotificationPreferenceAsync(
+            NotificationPreference.WeeklyUsageReset,
+            enabled);
+
+    public async Task<bool> SetNotificationPreferenceAsync(
+        NotificationPreference preference,
+        bool enabled)
     {
         if (Volatile.Read(ref stopping) != 0)
         {
             return false;
         }
 
-        NotifyOnUsageReset = enabled;
+        SetNotificationPreference(preference, enabled);
         await saveGate.WaitAsync();
         try
         {
             if (Volatile.Read(ref stopping) != 0)
             {
-                NotifyOnUsageReset = persistedSettings.NotifyOnUsageReset;
+                SetNotificationPreference(
+                    preference,
+                    GetNotificationPreference(persistedSettings, preference));
                 return false;
             }
 
             var baselineSettings = persistedSettings;
             try
             {
-                var updatedSettings = await monitor.SetNotifyOnUsageResetAsync(
+                var updatedSettings = await monitor.SetNotificationPreferenceAsync(
                     settingsUpdateService,
+                    preference,
                     enabled,
                     CancellationToken.None);
                 MergeFreshPersistedSettings(baselineSettings, updatedSettings);
-                NotifyOnUsageReset = updatedSettings.NotifyOnUsageReset;
+                SetNotificationPreference(
+                    preference,
+                    GetNotificationPreference(updatedSettings, preference));
                 SaveStatus = string.Empty;
                 return true;
             }
@@ -587,14 +627,16 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                     or UnauthorizedAccessException
                     or System.Security.SecurityException)
             {
-                SaveStatus = "사용량 초기화 알림 설정을 안전하게 적용하지 못했습니다.";
+                SaveStatus = "알림 설정을 안전하게 적용하지 못했습니다.";
             }
             catch (Exception)
             {
-                SaveStatus = "예상하지 못한 로컬 오류로 사용량 초기화 알림 설정을 적용하지 않았습니다.";
+                SaveStatus = "예상하지 못한 로컬 오류로 알림 설정을 적용하지 않았습니다.";
             }
 
-            NotifyOnUsageReset = persistedSettings.NotifyOnUsageReset;
+            SetNotificationPreference(
+                preference,
+                GetNotificationPreference(persistedSettings, preference));
             return false;
         }
         finally
@@ -881,7 +923,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                 FiveHourAutomationEnabled =
                     fiveHourThreshold.HasValue
                     && FiveHourAutomationEnabled,
-                NotifyOnUsageReset = NotifyOnUsageReset,
+                NotifyOnWeeklyUsageReset = NotifyOnWeeklyUsageReset,
+                NotifyOnFiveHourUsageReset = NotifyOnFiveHourUsageReset,
+                NotifyOnCreditGranted = NotifyOnCreditGranted,
             };
 
             try
@@ -1134,7 +1178,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             settings.IsAutomationEnabled(TriggerLimit.Weekly);
         FiveHourAutomationEnabled =
             settings.IsAutomationEnabled(TriggerLimit.FiveHour);
-        NotifyOnUsageReset = settings.NotifyOnUsageReset;
+        NotifyOnWeeklyUsageReset = settings.NotifyOnWeeklyUsageReset;
+        NotifyOnFiveHourUsageReset = settings.NotifyOnFiveHourUsageReset;
+        NotifyOnCreditGranted = settings.NotifyOnCreditGranted;
         OnPropertyChanged(nameof(RequiresAutomationEnableConfirmation));
         OnPropertyChanged(
             nameof(RequiresFiveHourAutomationEnableConfirmation));
@@ -1286,8 +1332,14 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
             FiveHourAutomationEnabled
                 == baselineSettings.IsAutomationEnabled(
                     TriggerLimit.FiveHour);
-        var notificationWasUnedited =
-            NotifyOnUsageReset == baselineSettings.NotifyOnUsageReset;
+        var weeklyNotificationWasUnedited =
+            NotifyOnWeeklyUsageReset
+                == baselineSettings.NotifyOnWeeklyUsageReset;
+        var fiveHourNotificationWasUnedited =
+            NotifyOnFiveHourUsageReset
+                == baselineSettings.NotifyOnFiveHourUsageReset;
+        var creditNotificationWasUnedited =
+            NotifyOnCreditGranted == baselineSettings.NotifyOnCreditGranted;
         var codexExecutableWasUnedited = string.Equals(
             codexExecutablePath,
             baselineSettings.CodexExecutablePath,
@@ -1325,9 +1377,20 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
                     TriggerLimit.FiveHour);
         }
 
-        if (notificationWasUnedited)
+        if (weeklyNotificationWasUnedited)
         {
-            NotifyOnUsageReset = freshSettings.NotifyOnUsageReset;
+            NotifyOnWeeklyUsageReset = freshSettings.NotifyOnWeeklyUsageReset;
+        }
+
+        if (fiveHourNotificationWasUnedited)
+        {
+            NotifyOnFiveHourUsageReset =
+                freshSettings.NotifyOnFiveHourUsageReset;
+        }
+
+        if (creditNotificationWasUnedited)
+        {
+            NotifyOnCreditGranted = freshSettings.NotifyOnCreditGranted;
         }
 
         if (codexExecutableWasUnedited)
@@ -1384,6 +1447,39 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged
         }
 
         throw new ArgumentOutOfRangeException(nameof(triggerLimit));
+    }
+
+    private static bool GetNotificationPreference(
+        GuardSettings settings,
+        NotificationPreference preference) => preference switch
+        {
+            NotificationPreference.WeeklyUsageReset =>
+                settings.NotifyOnWeeklyUsageReset,
+            NotificationPreference.FiveHourUsageReset =>
+                settings.NotifyOnFiveHourUsageReset,
+            NotificationPreference.CreditGranted =>
+                settings.NotifyOnCreditGranted,
+            _ => throw new ArgumentOutOfRangeException(nameof(preference)),
+        };
+
+    private void SetNotificationPreference(
+        NotificationPreference preference,
+        bool enabled)
+    {
+        switch (preference)
+        {
+            case NotificationPreference.WeeklyUsageReset:
+                NotifyOnWeeklyUsageReset = enabled;
+                break;
+            case NotificationPreference.FiveHourUsageReset:
+                NotifyOnFiveHourUsageReset = enabled;
+                break;
+            case NotificationPreference.CreditGranted:
+                NotifyOnCreditGranted = enabled;
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(preference));
+        }
     }
 
     private void RefreshStartupState()

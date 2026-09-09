@@ -1,5 +1,6 @@
 using CodexAutoReset.Core;
 using CodexAutoReset.Desktop;
+using CodexAutoReset.Runtime;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace CodexAutoReset.Desktop.Tests;
@@ -131,6 +132,37 @@ public sealed class UsageResetNotificationFormatterTests
             DetectedAt = detection.DetectedAt.AddDays(7),
         };
         Assert.IsNotNull(gate.Consume(nextEvent, notificationsEnabled: true));
+    }
+
+    [TestMethod]
+    public void SupplementalFormatter_DistinguishesFiveHourAndCreditGrant()
+    {
+        var fiveHour = SupplementalNotificationFormatter.Format(
+            new PendingSupplementalNotification(
+                "five",
+                SupplementalNotificationKind.FiveHourScheduledReset,
+                new DateTimeOffset(2030, 1, 14, 12, 0, 0, TimeSpan.Zero),
+                new DateTimeOffset(2030, 1, 14, 17, 0, 0, TimeSpan.Zero)
+                    .ToUnixTimeSeconds()));
+        Assert.AreEqual("5시간 한도 초기화", fiveHour.Title);
+        StringAssert.Contains(fiveHour.Message, "5시간 사용량");
+
+        var credit = SupplementalNotificationFormatter.Format(
+            new PendingSupplementalNotification(
+                "credit",
+                SupplementalNotificationKind.CreditGranted,
+                new DateTimeOffset(2030, 1, 14, 12, 0, 0, TimeSpan.Zero),
+                AddedCreditCount: 2,
+                AddedCreditExpirations:
+                [
+                    new DateTimeOffset(2030, 1, 20, 0, 0, 0, TimeSpan.Zero)
+                        .ToUnixTimeSeconds(),
+                    new DateTimeOffset(2030, 1, 21, 0, 0, 0, TimeSpan.Zero)
+                        .ToUnixTimeSeconds(),
+                ]));
+        Assert.AreEqual("초기화권 신규 지급", credit.Title);
+        StringAssert.Contains(credit.Message, "2개");
+        StringAssert.Contains(credit.Detail, "가장 빠른 만료 예정");
     }
 
     private static WeeklyUsageResetDetection Detection(

@@ -114,11 +114,21 @@ public sealed class SettingsUpdateServiceTests
         await service.SaveNotifyOnUsageResetAsync(
             notifyOnUsageReset: false,
             CancellationToken.None);
+        await service.SaveNotificationPreferenceAsync(
+            NotificationPreference.FiveHourUsageReset,
+            enabled: false,
+            CancellationToken.None);
+        await service.SaveNotificationPreferenceAsync(
+            NotificationPreference.CreditGranted,
+            enabled: false,
+            CancellationToken.None);
 
         Assert.AreEqual(22, persisted.RemainingThresholdPercent);
         Assert.AreEqual(13, persisted.PollIntervalMinutes);
         Assert.IsFalse(persisted.AutomationEnabled);
         Assert.IsFalse(persisted.NotifyOnUsageReset);
+        Assert.IsFalse(persisted.NotifyOnFiveHourUsageReset);
+        Assert.IsFalse(persisted.NotifyOnCreditGranted);
         Assert.IsTrue(persisted.StartWithWindows);
         Assert.AreEqual(codexPath, persisted.CodexExecutablePath);
         Assert.AreEqual(0, registry.WriteCount);

@@ -109,7 +109,7 @@ public sealed class JsonSettingsStore
             directory,
             $".{System.IO.Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
 
-        var document = SettingsDocumentV6.FromSettings(settings);
+        var document = SettingsDocumentV7.FromSettings(settings);
 
         try
         {
@@ -215,6 +215,7 @@ public sealed class JsonSettingsStore
             4 => ValidateAndMap(DeserializeRequired<SettingsDocumentV4>(root)),
             5 => ValidateAndMap(DeserializeRequired<SettingsDocumentV5>(root)),
             6 => ValidateAndMap(DeserializeRequired<SettingsDocumentV6>(root)),
+            7 => ValidateAndMap(DeserializeRequired<SettingsDocumentV7>(root)),
             _ => throw new SettingsException("settings_schema_unsupported"),
         };
     }
@@ -304,6 +305,23 @@ public sealed class JsonSettingsStore
             document.NotifyOnUsageReset,
             document.FiveHourRemainingThresholdPercent,
             document.FiveHourAutomationEnabled,
+            notifyOnFiveHourUsageReset: document.NotifyOnUsageReset,
+            notifyOnCreditGranted: document.NotifyOnUsageReset,
+            migrateLegacyHundred: false);
+
+    private static GuardSettings ValidateAndMap(SettingsDocumentV7 document) =>
+        ValidateAndMap(
+            document.WeeklyRemainingThresholdPercent,
+            GuardSettings.FixedPollIntervalMinutes,
+            document.UiLanguage,
+            document.StartWithWindows,
+            document.CodexExecutablePath,
+            document.WeeklyAutomationEnabled,
+            document.NotifyOnWeeklyUsageReset,
+            document.FiveHourRemainingThresholdPercent,
+            document.FiveHourAutomationEnabled,
+            document.NotifyOnFiveHourUsageReset,
+            document.NotifyOnCreditGranted,
             migrateLegacyHundred: false);
 
     private static GuardSettings ValidateAndMap(
@@ -316,6 +334,8 @@ public sealed class JsonSettingsStore
         bool notifyOnUsageReset,
         int? fiveHourRemainingThresholdPercent = 7,
         bool fiveHourAutomationEnabled = false,
+        bool? notifyOnFiveHourUsageReset = null,
+        bool? notifyOnCreditGranted = null,
         bool migrateLegacyHundred = true)
     {
         if (pollIntervalMinutes is < 1 or > 60)
@@ -347,7 +367,9 @@ public sealed class JsonSettingsStore
             automationEnabled,
             notifyOnUsageReset,
             fiveHourRemainingThresholdPercent,
-            fiveHourAutomationEnabled);
+            fiveHourAutomationEnabled,
+            notifyOnFiveHourUsageReset ?? notifyOnUsageReset,
+            notifyOnCreditGranted ?? notifyOnUsageReset);
 
         Validate(settings);
         return settings;
@@ -641,6 +663,64 @@ public sealed class JsonSettingsStore
             WeeklyAutomationEnabled = settings.WeeklyAutomationEnabled,
             FiveHourAutomationEnabled = settings.FiveHourAutomationEnabled,
             NotifyOnUsageReset = settings.NotifyOnUsageReset,
+        };
+    }
+
+    private sealed record SettingsDocumentV7
+    {
+        [JsonRequired]
+        public int SchemaVersion { get; init; } = 7;
+
+        [JsonRequired]
+        public int? WeeklyRemainingThresholdPercent { get; init; }
+
+        [JsonRequired]
+        public int? FiveHourRemainingThresholdPercent { get; init; }
+
+        [JsonRequired]
+        public string UiLanguage { get; init; } = "auto";
+
+        [JsonRequired]
+        public bool StartWithWindows { get; init; }
+
+        [JsonRequired]
+        public string? CodexExecutablePath { get; init; }
+
+        [JsonRequired]
+        public bool WeeklyAutomationEnabled { get; init; }
+
+        [JsonRequired]
+        public bool FiveHourAutomationEnabled { get; init; }
+
+        [JsonRequired]
+        public bool NotifyOnWeeklyUsageReset { get; init; } = true;
+
+        [JsonRequired]
+        public bool NotifyOnFiveHourUsageReset { get; init; } = true;
+
+        [JsonRequired]
+        public bool NotifyOnCreditGranted { get; init; } = true;
+
+        public static SettingsDocumentV7 FromSettings(GuardSettings settings) => new()
+        {
+            SchemaVersion = 7,
+            WeeklyRemainingThresholdPercent =
+                settings.WeeklyRemainingThresholdPercent,
+            FiveHourRemainingThresholdPercent =
+                settings.FiveHourRemainingThresholdPercent,
+            UiLanguage = settings.UiLanguage switch
+            {
+                CodexAutoReset.Core.UiLanguage.Korean => "ko-KR",
+                CodexAutoReset.Core.UiLanguage.English => "en-US",
+                _ => "auto",
+            },
+            StartWithWindows = settings.StartWithWindows,
+            CodexExecutablePath = settings.CodexExecutablePath,
+            WeeklyAutomationEnabled = settings.WeeklyAutomationEnabled,
+            FiveHourAutomationEnabled = settings.FiveHourAutomationEnabled,
+            NotifyOnWeeklyUsageReset = settings.NotifyOnWeeklyUsageReset,
+            NotifyOnFiveHourUsageReset = settings.NotifyOnFiveHourUsageReset,
+            NotifyOnCreditGranted = settings.NotifyOnCreditGranted,
         };
     }
 }

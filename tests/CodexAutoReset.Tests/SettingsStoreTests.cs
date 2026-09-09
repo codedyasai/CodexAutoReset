@@ -108,11 +108,13 @@ public sealed class SettingsStoreTests
         Assert.IsFalse(settings.FiveHourAutomationEnabled);
         Assert.IsFalse(settings.AnyAutomationEnabled);
         Assert.IsTrue(settings.NotifyOnUsageReset);
+        Assert.IsTrue(settings.NotifyOnFiveHourUsageReset);
+        Assert.IsTrue(settings.NotifyOnCreditGranted);
         Assert.AreEqual(
             GuardSettings.FixedPollIntervalMinutes,
             settings.PollIntervalMinutes);
         var json = await File.ReadAllTextAsync(path, Encoding.UTF8);
-        StringAssert.Contains(json, "\"schemaVersion\": 6");
+        StringAssert.Contains(json, "\"schemaVersion\": 7");
         StringAssert.Contains(
             json,
             "\"weeklyRemainingThresholdPercent\": null");
@@ -121,7 +123,9 @@ public sealed class SettingsStoreTests
             "\"fiveHourRemainingThresholdPercent\": null");
         StringAssert.Contains(json, "\"weeklyAutomationEnabled\": false");
         StringAssert.Contains(json, "\"fiveHourAutomationEnabled\": false");
-        StringAssert.Contains(json, "\"notifyOnUsageReset\": true");
+        StringAssert.Contains(json, "\"notifyOnWeeklyUsageReset\": true");
+        StringAssert.Contains(json, "\"notifyOnFiveHourUsageReset\": true");
+        StringAssert.Contains(json, "\"notifyOnCreditGranted\": true");
         Assert.IsFalse(
             json.Contains("pollIntervalMinutes", StringComparison.Ordinal));
         Assert.IsFalse(
@@ -239,13 +243,13 @@ public sealed class SettingsStoreTests
             FiveHourRemainingThresholdPercent = 29,
             AutomationEnabled = true,
             FiveHourAutomationEnabled = false,
-            NotifyOnUsageReset = false,
+            NotifyOnWeeklyUsageReset = false,
         };
 
         await store.SaveAsync(enabled, CancellationToken.None);
 
         var json = await File.ReadAllTextAsync(path, Encoding.UTF8);
-        StringAssert.Contains(json, "\"schemaVersion\": 6");
+        StringAssert.Contains(json, "\"schemaVersion\": 7");
         StringAssert.Contains(
             json,
             "\"weeklyRemainingThresholdPercent\": 13");
@@ -254,7 +258,9 @@ public sealed class SettingsStoreTests
             "\"fiveHourRemainingThresholdPercent\": 29");
         StringAssert.Contains(json, "\"weeklyAutomationEnabled\": true");
         StringAssert.Contains(json, "\"fiveHourAutomationEnabled\": false");
-        StringAssert.Contains(json, "\"notifyOnUsageReset\": false");
+        StringAssert.Contains(json, "\"notifyOnWeeklyUsageReset\": false");
+        StringAssert.Contains(json, "\"notifyOnFiveHourUsageReset\": true");
+        StringAssert.Contains(json, "\"notifyOnCreditGranted\": true");
         Assert.IsFalse(
             json.Contains("pollIntervalMinutes", StringComparison.Ordinal));
         Assert.IsFalse(
@@ -278,7 +284,7 @@ public sealed class SettingsStoreTests
             AutomationEnabled = true,
             FiveHourRemainingThresholdPercent = null,
             FiveHourAutomationEnabled = true,
-            NotifyOnUsageReset = false,
+            NotifyOnWeeklyUsageReset = false,
         };
 
         await store.SaveAsync(nullable, CancellationToken.None);
@@ -331,7 +337,7 @@ public sealed class SettingsStoreTests
         Assert.IsFalse(settings.WeeklyAutomationEnabled);
         Assert.IsTrue(settings.FiveHourAutomationEnabled);
         var json = await File.ReadAllTextAsync(path, Encoding.UTF8);
-        StringAssert.Contains(json, "\"schemaVersion\": 6");
+        StringAssert.Contains(json, "\"schemaVersion\": 7");
         StringAssert.Contains(
             json,
             "\"weeklyRemainingThresholdPercent\": 11");
@@ -352,6 +358,19 @@ public sealed class SettingsStoreTests
         Assert.IsNull(settings.FiveHourRemainingThresholdPercent);
         Assert.IsTrue(settings.WeeklyAutomationEnabled);
         Assert.IsFalse(settings.FiveHourAutomationEnabled);
+    }
+
+    [TestMethod]
+    public async Task VersionSixMigratesTheExistingNotificationChoiceToAllThreeOptions()
+    {
+        var document = JsonNode.Parse(ValidV6SettingsJson)!.AsObject();
+        document["notifyOnUsageReset"] = false;
+
+        var settings = await LoadSettingsAsync(document.ToJsonString());
+
+        Assert.IsFalse(settings.NotifyOnWeeklyUsageReset);
+        Assert.IsFalse(settings.NotifyOnFiveHourUsageReset);
+        Assert.IsFalse(settings.NotifyOnCreditGranted);
     }
 
     [TestMethod]

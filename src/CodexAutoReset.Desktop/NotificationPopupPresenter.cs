@@ -1,4 +1,5 @@
 using CodexAutoReset.Core;
+using CodexAutoReset.Runtime;
 
 namespace CodexAutoReset.Desktop;
 
@@ -41,6 +42,18 @@ public sealed record NotificationPopupRequest
             notification.Title,
             message,
             detail);
+    }
+
+    public static NotificationPopupRequest FromSupplemental(
+        PendingSupplementalNotification notification)
+    {
+        ArgumentNullException.ThrowIfNull(notification);
+        var content = SupplementalNotificationFormatter.Format(notification);
+        return new NotificationPopupRequest(
+            notification.EventId,
+            content.Title,
+            content.Message,
+            content.Detail);
     }
 }
 

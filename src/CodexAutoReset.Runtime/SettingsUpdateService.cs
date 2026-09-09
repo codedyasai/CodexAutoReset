@@ -76,10 +76,31 @@ public sealed class SettingsUpdateService
     public Task<GuardSettings> SaveNotifyOnUsageResetAsync(
         bool notifyOnUsageReset,
         CancellationToken cancellationToken) =>
+        SaveNotificationPreferenceAsync(
+            NotificationPreference.WeeklyUsageReset,
+            notifyOnUsageReset,
+            cancellationToken);
+
+    public Task<GuardSettings> SaveNotificationPreferenceAsync(
+        NotificationPreference preference,
+        bool enabled,
+        CancellationToken cancellationToken) =>
         SaveSettingsPatchAsync(
-            settings => settings with
+            settings => preference switch
             {
-                NotifyOnUsageReset = notifyOnUsageReset,
+                NotificationPreference.WeeklyUsageReset => settings with
+                {
+                    NotifyOnWeeklyUsageReset = enabled,
+                },
+                NotificationPreference.FiveHourUsageReset => settings with
+                {
+                    NotifyOnFiveHourUsageReset = enabled,
+                },
+                NotificationPreference.CreditGranted => settings with
+                {
+                    NotifyOnCreditGranted = enabled,
+                },
+                _ => throw new ArgumentOutOfRangeException(nameof(preference)),
             },
             cancellationToken);
 

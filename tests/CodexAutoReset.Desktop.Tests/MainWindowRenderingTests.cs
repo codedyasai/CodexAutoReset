@@ -67,12 +67,20 @@ public sealed class MainWindowRenderingTests
                 var connectionCard = (Border)window.FindName("CodexConnectionCard");
                 var usageCard =
                     (Border)window.FindName("UsageOverviewCard");
+                var creditManagementCard =
+                    (Border)window.FindName("CreditManagementCard");
                 var weeklyUsageSection =
                     (StackPanel)window.FindName("WeeklyUsageSection");
                 var fiveHourUsageSection =
                     (Border)window.FindName("FiveHourUsageCard");
-                var usageSummaryGrid =
-                    (Grid)window.FindName("UsageSummaryGrid");
+                var creditManagementGrid =
+                    (Grid)window.FindName("CreditManagementGrid");
+                var creditInventoryRow =
+                    (Grid)window.FindName("CreditInventoryRow");
+                var weeklyUsageValueRow =
+                    (Grid)window.FindName("WeeklyUsageValueRow");
+                var fiveHourUsageValueRow =
+                    (Grid)window.FindName("FiveHourUsageValueRow");
                 var usageHeaderGrid =
                     (Grid)window.FindName("UsageHeaderGrid");
                 var lastCheckedInlineText =
@@ -87,7 +95,6 @@ public sealed class MainWindowRenderingTests
                 var creditExpirationItemsControl =
                     (ItemsControl)window.FindName(
                         "CreditExpirationItemsControl");
-                var settingsCard = (Border)window.FindName("SettingsCard");
                 var overallStatusPanel =
                     (Border)window.FindName("OverallStatusPanel");
                 var compatibilityWarningIcon =
@@ -103,31 +110,36 @@ public sealed class MainWindowRenderingTests
                     (Border)window.FindName("CodexConnectionPathBox");
                 var codexConnectionPathPanel =
                     (Grid)window.FindName("CodexConnectionPathPanel");
-                var settingsSplitGrid = (Grid)window.FindName("SettingsSplitGrid");
-                var settingsTopOptionsGrid =
-                    (Grid)window.FindName("SettingsTopOptionsGrid");
-                var settingsAutomationPanel =
-                    (Grid)window.FindName("SettingsAutomationPanel");
-                var settingsNotificationPanel =
-                    (Grid)window.FindName("SettingsNotificationPanel");
+                var connectionStartupPanel =
+                    (Grid)window.FindName("ConnectionStartupPanel");
                 var settingsNumericPanel =
-                    (Grid)window.FindName("SettingsNumericPanel");
+                    (Grid)window.FindName("InlineAutomationNumericPanel");
                 var weeklyAutomationRow =
-                    (Grid)window.FindName("WeeklyAutomationRow");
+                    (Grid)window.FindName("InlineWeeklyAutomationRow");
                 var fiveHourAutomationRow =
-                    (Grid)window.FindName("FiveHourAutomationRow");
+                    (Grid)window.FindName("InlineFiveHourAutomationRow");
+                var weeklyNotificationPanel =
+                    (Grid)window.FindName("WeeklyResetNotificationPanel");
+                var fiveHourNotificationPanel =
+                    (Grid)window.FindName("FiveHourResetNotificationPanel");
+                var creditNotificationPanel =
+                    (Grid)window.FindName("CreditGrantedNotificationPanel");
                 var startWithWindows =
                     (CheckBox)window.FindName("StartWithWindowsCheckBox");
                 var weeklyAutomationToggle =
-                    (CheckBox)window.FindName("WeeklyAutomationToggle");
+                    (CheckBox)window.FindName("InlineWeeklyAutomationToggle");
                 var fiveHourAutomationToggle =
-                    (CheckBox)window.FindName("FiveHourAutomationToggle");
-                var usageResetNotificationToggle =
-                    (CheckBox)window.FindName("UsageResetNotificationToggle");
+                    (CheckBox)window.FindName("InlineFiveHourAutomationToggle");
+                var weeklyNotificationToggle =
+                    (CheckBox)window.FindName("WeeklyUsageResetNotificationToggle");
+                var fiveHourNotificationToggle =
+                    (CheckBox)window.FindName("FiveHourUsageResetNotificationToggle");
+                var creditNotificationToggle =
+                    (CheckBox)window.FindName("CreditGrantedNotificationToggle");
                 var weeklyThresholdInput =
-                    (TextBox)window.FindName("WeeklyThresholdInput");
+                    (TextBox)window.FindName("InlineWeeklyThresholdInput");
                 var fiveHourThresholdInput =
-                    (TextBox)window.FindName("FiveHourThresholdInput");
+                    (TextBox)window.FindName("InlineFiveHourThresholdInput");
                 var refreshButton = (Button)window.FindName("RefreshButton");
                 var buttons = FindVisualChildren<Button>(window).ToArray();
                 var progressBars =
@@ -155,24 +167,66 @@ public sealed class MainWindowRenderingTests
                             ?.Path?.Path)
                     .Where(path => path is not null)
                     .ToArray();
-                var creditStatusValue = FindVisualChildren<TextBlock>(window)
+                var fiveHourUsageHeading = FindVisualChildren<TextBlock>(window)
+                    .Single(textBlock => string.Equals(
+                        textBlock.Text,
+                        "5시간 한도 잔여량",
+                        StringComparison.Ordinal));
+                var creditManagementHeading = FindVisualChildren<TextBlock>(window)
+                    .Single(textBlock => string.Equals(
+                        textBlock.Text,
+                        "초기화권 관리",
+                        StringComparison.Ordinal));
+                var creditAutomationHeading = FindVisualChildren<TextBlock>(window)
+                    .Single(textBlock => string.Equals(
+                        textBlock.Text,
+                        "초기화권 자동 사용 설정",
+                        StringComparison.Ordinal));
+                var creditNotificationLabel = FindVisualChildren<TextBlock>(window)
+                    .Single(textBlock => string.Equals(
+                        textBlock.Text,
+                        "초기화권 신규 지급 알림",
+                        StringComparison.Ordinal));
+                var weeklyNotificationLabel = FindVisualChildren<TextBlock>(
+                    weeklyNotificationPanel).Single(textBlock => string.Equals(
+                        textBlock.Text,
+                        "주간 사용량 초기화 알림",
+                        StringComparison.Ordinal));
+                var fiveHourNotificationLabel = FindVisualChildren<TextBlock>(
+                    fiveHourNotificationPanel).Single(textBlock => string.Equals(
+                        textBlock.Text,
+                        "5시간 사용량 초기화 알림",
+                        StringComparison.Ordinal));
+                var creditExpirationItemText = FindVisualChildren<TextBlock>(
+                    creditExpirationItemsControl).Single();
+                var weeklyRemainingValue = FindVisualChildren<TextBlock>(window)
                     .Single(textBlock => string.Equals(
                         BindingOperations.GetBinding(
                             textBlock,
                             TextBlock.TextProperty)?.Path?.Path,
-                        "CreditStatus",
+                        "WeeklyRemainingText",
+                        StringComparison.Ordinal));
+                var fiveHourRemainingValue = FindVisualChildren<TextBlock>(window)
+                    .Single(textBlock => string.Equals(
+                        BindingOperations.GetBinding(
+                            textBlock,
+                            TextBlock.TextProperty)?.Path?.Path,
+                        "FiveHourRemainingText",
                         StringComparison.Ordinal));
                 Assert.AreEqual(0, Grid.GetRow(connectionCard));
                 Assert.AreEqual(1, Grid.GetRow(usageCard));
-                Assert.AreEqual(2, Grid.GetRow(settingsCard));
+                Assert.AreEqual(2, Grid.GetRow(creditManagementCard));
+                Assert.IsNull(window.FindName("SettingsCard"));
                 Assert.AreEqual(800, configuredWindowWidth);
                 Assert.AreEqual(820, configuredWindowHeight);
-                Assert.AreEqual(680, window.MinWidth);
-                Assert.AreEqual(620, window.MinHeight);
+                Assert.AreEqual(320, window.MinWidth);
+                Assert.AreEqual(360, window.MinHeight);
                 Assert.IsTrue(usageCard.IsAncestorOf(weeklyUsageSection));
                 Assert.IsTrue(usageCard.IsAncestorOf(fiveHourUsageSection));
                 Assert.IsTrue(usageCard.IsAncestorOf(refreshButton));
-                Assert.IsTrue(usageCard.IsAncestorOf(usageSummaryGrid));
+                Assert.IsFalse(usageCard.IsAncestorOf(creditManagementCard));
+                Assert.IsTrue(creditManagementCard.IsAncestorOf(
+                    creditManagementGrid));
                 Assert.IsTrue(usageHeaderGrid.IsAncestorOf(
                     lastCheckedInlineText));
                 Assert.IsTrue(weeklyUsageSection.IsAncestorOf(
@@ -193,7 +247,7 @@ public sealed class MainWindowRenderingTests
                     <= fiveHourResetInlineText.TranslatePoint(
                         new Point(),
                         fiveHourUsageSection).Y);
-                Assert.IsTrue(usageSummaryGrid.IsAncestorOf(
+                Assert.IsTrue(creditManagementGrid.IsAncestorOf(
                     creditExpirationScrollViewer));
                 Assert.IsTrue(creditExpirationScrollViewer.IsAncestorOf(
                     creditExpirationItemsControl));
@@ -208,14 +262,14 @@ public sealed class MainWindowRenderingTests
                     fiveHourUsageSection.TranslatePoint(
                         new Point(0, fiveHourUsageSection.ActualHeight),
                         window).Y
-                    <= usageSummaryGrid.TranslatePoint(
+                    <= creditManagementCard.TranslatePoint(
                         new Point(),
                         window).Y);
                 Assert.AreEqual(
                     weeklyUsageSection.ActualWidth,
-                    usageSummaryGrid.ActualWidth,
+                    creditManagementGrid.ActualWidth,
                     0.5);
-                Assert.AreEqual(3, appHeaderGrid.ColumnDefinitions.Count);
+                Assert.AreEqual(4, appHeaderGrid.ColumnDefinitions.Count);
                 Assert.AreEqual(2, Grid.GetColumn(alwaysOnTopToggle));
                 Assert.IsFalse(alwaysOnTopToggle.IsChecked);
                 Assert.IsFalse(window.Topmost);
@@ -296,6 +350,9 @@ public sealed class MainWindowRenderingTests
                 Assert.IsTrue(boundTextPaths.Contains(
                     "LastCheckedStatus",
                     StringComparer.Ordinal));
+                Assert.IsFalse(boundTextPaths.Contains(
+                    "CreditStatus",
+                    StringComparer.Ordinal));
                 Assert.AreEqual(
                     "최근 사용량 확인 · 확인 전",
                     lastCheckedInlineText.Text);
@@ -310,7 +367,26 @@ public sealed class MainWindowRenderingTests
                         textBlock.Text,
                         "마지막 정상 확인",
                         StringComparison.Ordinal)));
-                Assert.AreEqual(16, creditStatusValue.FontSize);
+                Assert.AreEqual(
+                    fiveHourUsageHeading.FontFamily,
+                    creditAutomationHeading.FontFamily);
+                Assert.AreEqual(
+                    fiveHourUsageHeading.FontSize,
+                    creditAutomationHeading.FontSize);
+                Assert.AreEqual(
+                    fiveHourUsageHeading.FontWeight,
+                    creditAutomationHeading.FontWeight);
+                Assert.AreEqual(
+                    fiveHourUsageHeading.Foreground,
+                    creditAutomationHeading.Foreground);
+                Assert.IsTrue(creditManagementCard.IsAncestorOf(
+                    creditManagementHeading));
+                Assert.IsTrue(creditNotificationPanel.IsAncestorOf(
+                    creditNotificationLabel));
+                Assert.AreEqual(
+                    ((SolidColorBrush)window.FindResource(
+                        "PrimaryTextBrush")).Color,
+                    ((SolidColorBrush)creditExpirationItemText.Foreground).Color);
                 Assert.AreEqual(13, lastCheckedInlineText.FontSize);
                 Assert.AreEqual(13, weeklyResetInlineText.FontSize);
                 Assert.AreEqual(
@@ -331,7 +407,7 @@ public sealed class MainWindowRenderingTests
                     <= refreshButton.TranslatePoint(
                         new Point(),
                         usageHeaderGrid).X);
-                Assert.AreEqual(48, creditExpirationScrollViewer.Height);
+                Assert.AreEqual(64, creditExpirationScrollViewer.Height);
                 Assert.AreEqual(
                     ScrollBarVisibility.Auto,
                     creditExpirationScrollViewer.VerticalScrollBarVisibility);
@@ -365,38 +441,67 @@ public sealed class MainWindowRenderingTests
                     < directFindButton.TranslatePoint(
                         new Point(),
                         codexConnectionPathPanel).X);
-                Assert.AreEqual(3, settingsSplitGrid.RowDefinitions.Count);
-                Assert.IsTrue(settingsSplitGrid.IsAncestorOf(
-                    settingsTopOptionsGrid));
-                Assert.IsTrue(settingsSplitGrid.IsAncestorOf(
-                    settingsNumericPanel));
                 Assert.IsNull(window.FindName("AutomationUseWarningPanel"));
-                Assert.AreEqual(3, settingsTopOptionsGrid.ColumnDefinitions.Count);
-                Assert.AreEqual(0, Grid.GetColumn(settingsAutomationPanel));
-                Assert.AreEqual(2, Grid.GetColumn(settingsNotificationPanel));
-                Assert.IsTrue(settingsTopOptionsGrid.IsAncestorOf(
-                    settingsAutomationPanel));
-                Assert.IsTrue(settingsTopOptionsGrid.IsAncestorOf(
-                    settingsNotificationPanel));
-                Assert.IsTrue(settingsAutomationPanel.IsAncestorOf(
-                    startWithWindows));
-                Assert.IsTrue(settingsNotificationPanel.IsAncestorOf(
-                    usageResetNotificationToggle));
-                Assert.IsTrue(
-                    settingsAutomationPanel.TranslatePoint(
-                        new Point(),
-                        settingsTopOptionsGrid).X
-                    < settingsNotificationPanel.TranslatePoint(
-                        new Point(),
-                        settingsTopOptionsGrid).X);
+                Assert.IsTrue(connectionCard.IsAncestorOf(connectionStartupPanel));
+                Assert.IsTrue(connectionStartupPanel.IsAncestorOf(startWithWindows));
+                Assert.IsTrue(creditManagementGrid.IsAncestorOf(
+                    settingsNumericPanel));
+                Assert.IsTrue(weeklyUsageValueRow.IsAncestorOf(
+                    weeklyNotificationPanel));
+                Assert.IsTrue(fiveHourUsageValueRow.IsAncestorOf(
+                    fiveHourNotificationPanel));
+                Assert.IsTrue(weeklyUsageValueRow.IsAncestorOf(
+                    weeklyRemainingValue));
+                Assert.IsTrue(fiveHourUsageValueRow.IsAncestorOf(
+                    fiveHourRemainingValue));
+                Assert.IsTrue(creditInventoryRow.IsAncestorOf(
+                    creditNotificationPanel));
+                Assert.AreEqual(72, creditInventoryRow.MinHeight);
                 Assert.AreEqual(
-                    startWithWindows.TranslatePoint(
-                        new Point(),
-                        settingsTopOptionsGrid).Y,
-                    usageResetNotificationToggle.TranslatePoint(
-                        new Point(),
-                        settingsTopOptionsGrid).Y,
+                    weeklyRemainingValue.TranslatePoint(
+                        new Point(0, weeklyRemainingValue.ActualHeight / 2),
+                        weeklyUsageValueRow).Y,
+                    weeklyNotificationPanel.TranslatePoint(
+                        new Point(0, weeklyNotificationPanel.ActualHeight / 2),
+                        weeklyUsageValueRow).Y,
                     0.5);
+                Assert.AreEqual(
+                    fiveHourRemainingValue.TranslatePoint(
+                        new Point(0, fiveHourRemainingValue.ActualHeight / 2),
+                        fiveHourUsageValueRow).Y,
+                    fiveHourNotificationPanel.TranslatePoint(
+                        new Point(0, fiveHourNotificationPanel.ActualHeight / 2),
+                        fiveHourUsageValueRow).Y,
+                    0.5);
+                Assert.IsTrue(weeklyNotificationPanel.IsAncestorOf(
+                    weeklyNotificationToggle));
+                Assert.IsTrue(fiveHourNotificationPanel.IsAncestorOf(
+                    fiveHourNotificationToggle));
+                Assert.IsTrue(creditNotificationPanel.IsAncestorOf(
+                    creditNotificationToggle));
+                Assert.AreEqual(weeklyNotificationPanel.Width,
+                    fiveHourNotificationPanel.Width);
+                Assert.AreEqual(weeklyNotificationPanel.Width,
+                    creditNotificationPanel.Width);
+                Assert.AreEqual(
+                    HorizontalAlignment.Right,
+                    weeklyNotificationLabel.HorizontalAlignment);
+                Assert.AreEqual(
+                    weeklyNotificationLabel.HorizontalAlignment,
+                    fiveHourNotificationLabel.HorizontalAlignment);
+                Assert.AreEqual(
+                    weeklyNotificationLabel.HorizontalAlignment,
+                    creditNotificationLabel.HorizontalAlignment);
+                Assert.AreEqual(8, weeklyNotificationLabel.Margin.Right);
+                Assert.AreEqual(
+                    weeklyNotificationLabel.Margin.Right,
+                    fiveHourNotificationLabel.Margin.Right);
+                Assert.AreEqual(
+                    weeklyNotificationLabel.Margin.Right,
+                    creditNotificationLabel.Margin.Right);
+                Assert.IsTrue(weeklyNotificationToggle.IsChecked);
+                Assert.IsTrue(fiveHourNotificationToggle.IsChecked);
+                Assert.IsTrue(creditNotificationToggle.IsChecked);
                 Assert.IsTrue(settingsNumericPanel.IsAncestorOf(
                     weeklyAutomationRow));
                 Assert.IsTrue(settingsNumericPanel.IsAncestorOf(
@@ -494,7 +599,7 @@ public sealed class MainWindowRenderingTests
                 Assert.IsTrue(FindVisualChildren<TextBlock>(window).Any(textBlock =>
                     string.Equals(
                         textBlock.Text,
-                        "초기화권 자동 사용",
+                        "초기화권 자동 사용 설정",
                         StringComparison.Ordinal)));
                 Assert.IsTrue(FindVisualChildren<TextBlock>(window).Any(textBlock =>
                     string.Equals(
@@ -522,7 +627,7 @@ public sealed class MainWindowRenderingTests
                 AssertAutomationToggleLayoutStability(
                     window,
                     viewModel,
-                    settingsCard,
+                    creditManagementCard,
                     weeklyAutomationToggle,
                     fiveHourAutomationToggle);
                 AssertToggleThumbAnimationDefinition(
@@ -559,19 +664,13 @@ public sealed class MainWindowRenderingTests
                     Color.FromRgb(0xD9, 0x77, 0x06),
                     ((SolidColorBrush)overallStatusPanel.BorderBrush).Color);
 
-                window.Width = window.MinWidth;
-                window.Height = window.MinHeight;
+                window.Width = 680;
+                window.Height = 620;
                 window.UpdateLayout();
-                Assert.IsTrue(settingsAutomationPanel.ActualWidth > 180);
-                Assert.IsTrue(settingsNotificationPanel.ActualWidth > 180);
                 Assert.IsTrue(settingsNumericPanel.ActualWidth > 440);
-                Assert.IsTrue(
-                    settingsNotificationPanel.TranslatePoint(
-                        new Point(),
-                        settingsTopOptionsGrid).X
-                    >= settingsAutomationPanel.TranslatePoint(
-                        new Point(settingsAutomationPanel.ActualWidth, 0),
-                        settingsTopOptionsGrid).X);
+                Assert.IsTrue(weeklyNotificationPanel.ActualWidth > 250);
+                Assert.IsTrue(fiveHourNotificationPanel.ActualWidth > 250);
+                Assert.IsTrue(creditNotificationPanel.ActualWidth > 250);
                 Assert.IsTrue(
                     weeklyAutomationToggle.TranslatePoint(
                         new Point(weeklyAutomationToggle.ActualWidth, 0),
@@ -587,6 +686,28 @@ public sealed class MainWindowRenderingTests
                         new Point(directFindButton.ActualWidth, 0),
                         codexConnectionPathPanel).X
                     <= codexConnectionPathPanel.ActualWidth + 0.5);
+
+                window.Width = window.MinWidth;
+                window.Height = window.MinHeight;
+                window.UpdateLayout();
+                Assert.AreEqual(Visibility.Collapsed, connectionCard.Visibility);
+                Assert.AreEqual(Visibility.Collapsed, creditManagementCard.Visibility);
+                Assert.AreEqual(Visibility.Collapsed, weeklyNotificationPanel.Visibility);
+                Assert.AreEqual(Visibility.Collapsed, fiveHourNotificationPanel.Visibility);
+                Assert.IsTrue(weeklyUsageSection.IsVisible);
+                Assert.IsTrue(fiveHourUsageSection.IsVisible);
+                Assert.IsTrue(overallStatusPanel.IsVisible);
+                var refreshPanel = (StackPanel)window.FindName("RefreshPanel");
+                Assert.AreSame(appHeaderGrid, refreshPanel.Parent);
+                Assert.IsTrue(refreshPanel.TranslatePoint(
+                    new Point(refreshPanel.ActualWidth, 0), appHeaderGrid).X <= appHeaderGrid.ActualWidth + 0.5);
+                Assert.IsTrue(usageCard.ActualWidth <= window.ActualWidth);
+                window.Width = configuredWindowWidth;
+                window.Height = configuredWindowHeight;
+                window.UpdateLayout();
+                Assert.AreEqual(Visibility.Visible, connectionCard.Visibility);
+                Assert.AreEqual(Visibility.Visible, creditManagementCard.Visibility);
+                Assert.AreSame(usageHeaderGrid, refreshPanel.Parent);
 
                 NotificationPopupWindowTestAssertions.Run(window);
                 completed = window.IsLoaded && window.ActualWidth > 0 && window.ActualHeight > 0;

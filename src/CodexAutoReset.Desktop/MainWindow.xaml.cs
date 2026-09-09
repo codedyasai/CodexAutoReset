@@ -5,13 +5,15 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
 using CodexAutoReset.AppServer;
+using CodexAutoReset.Core;
 
 namespace CodexAutoReset.Desktop;
 
 public partial class MainWindow : Window
 {
     private readonly MainWindowViewModel viewModel;
-    private readonly Func<bool, Task>? usageResetNotificationSettingChanged;
+    private readonly Func<NotificationPreference, bool, Task>?
+        notificationPreferenceChanged;
     private readonly DispatcherTimer weeklyThresholdSaveTimer;
     private readonly DispatcherTimer fiveHourThresholdSaveTimer;
     private bool weeklyThresholdSaveInProgress;
@@ -22,12 +24,11 @@ public partial class MainWindow : Window
 
     public MainWindow(
         MainWindowViewModel viewModel,
-        Func<bool, Task>? usageResetNotificationSettingChanged = null)
+        Func<NotificationPreference, bool, Task>? notificationPreferenceChanged = null)
     {
         InitializeComponent();
         this.viewModel = viewModel;
-        this.usageResetNotificationSettingChanged =
-            usageResetNotificationSettingChanged;
+        this.notificationPreferenceChanged = notificationPreferenceChanged;
         DataContext = viewModel;
 
         weeklyThresholdSaveTimer = new DispatcherTimer(
@@ -42,6 +43,51 @@ public partial class MainWindow : Window
             OnFiveHourThresholdSaveTimerTick,
             Dispatcher);
         fiveHourThresholdSaveTimer.Stop();
+        AppHeaderGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        SizeChanged += OnWindowSizeChanged;
+    }
+
+    private bool? compactView;
+
+    private void OnWindowSizeChanged(object sender, SizeChangedEventArgs eventArgs)
+    {
+        // The full settings rows require the original 680 DIP minimum width.
+        var compact = ActualWidth < 680;
+        if (compactView == compact)
+        {
+            return;
+        }
+
+        compactView = compact;
+        var fullVisibility = compact ? Visibility.Collapsed : Visibility.Visible;
+        CodexConnectionCard.Visibility = fullVisibility;
+        CreditManagementCard.Visibility = fullVisibility;
+        WeeklyResetNotificationPanel.Visibility = fullVisibility;
+        FiveHourResetNotificationPanel.Visibility = fullVisibility;
+        HeaderDescription.Visibility = fullVisibility;
+        UsageHeaderGrid.Visibility = fullVisibility;
+        HeaderWordmark.Width = compact ? 100 : 126;
+        HeaderWordmark.Height = compact ? 38 : 48;
+        AppHeaderBorder.Padding = compact ? new Thickness(12, 10, 12, 10) : new Thickness(24, 17, 24, 17);
+        MainContentGrid.Margin = compact ? new Thickness(12) : new Thickness(28, 26, 28, 34);
+        WeeklyUsageSection.Margin = compact ? new Thickness(0) : new Thickness(0, 16, 0, 0);
+        if (compact)
+        {
+            UsageOverviewCard.Padding = new Thickness(16);
+            UsageHeaderGrid.Children.Remove(RefreshPanel);
+            Grid.SetColumn(RefreshPanel, 3);
+            AppHeaderGrid.Children.Add(RefreshPanel);
+        }
+        else
+        {
+            UsageOverviewCard.ClearValue(PaddingProperty);
+            AppHeaderGrid.Children.Remove(RefreshPanel);
+            Grid.SetColumn(RefreshPanel, 2);
+            if (!UsageHeaderGrid.Children.Contains(RefreshPanel))
+            {
+                UsageHeaderGrid.Children.Add(RefreshPanel);
+            }
+        }
     }
 
     public void ShowAndActivate()
@@ -190,7 +236,7 @@ public partial class MainWindow : Window
         object sender,
         KeyboardFocusChangedEventArgs eventArgs)
     {
-        if (ReferenceEquals(sender, WeeklyThresholdInput))
+        if (ReferenceEquals(sender, InlineWeeklyThresholdInput))
         {
             weeklyThresholdSaveTimer.Stop();
             await SaveThresholdFromUiAsync(isFiveHour: false);
@@ -211,7 +257,7 @@ public partial class MainWindow : Window
         }
 
         eventArgs.Handled = true;
-        if (ReferenceEquals(sender, WeeklyThresholdInput))
+        if (ReferenceEquals(sender, InlineWeeklyThresholdInput))
         {
             weeklyThresholdSaveTimer.Stop();
             await SaveThresholdFromUiAsync(isFiveHour: false);
@@ -246,16 +292,54 @@ public partial class MainWindow : Window
         await viewModel.SetStartWithWindowsAsync(checkBox.IsChecked == true);
     }
 
-    private async void OnUsageResetNotificationClick(
+    private async void OnWeeklyUsageResetNotificationClick(
         object sender,
         RoutedEventArgs eventArgs)
     {
         var checkBox = (System.Windows.Controls.CheckBox)sender;
         var enabled = checkBox.IsChecked == true;
-        var saved = await viewModel.SetNotifyOnUsageResetAsync(enabled);
-        if (saved && usageResetNotificationSettingChanged is not null)
+        var saved = await viewModel.SetNotificationPreferenceAsync(
+            NotificationPreference.WeeklyUsageReset,
+            enabled);
+        if (saved && notificationPreferenceChanged is not null)
         {
-            await usageResetNotificationSettingChanged(enabled);
+            await notificationPreferenceChanged(
+                NotificationPreference.WeeklyUsageReset,
+                enabled);
+        }
+    }
+
+    private async void OnFiveHourUsageResetNotificationClick(
+        object sender,
+        RoutedEventArgs eventArgs)
+    {
+        var checkBox = (System.Windows.Controls.CheckBox)sender;
+        var enabled = checkBox.IsChecked == true;
+        var saved = await viewModel.SetNotificationPreferenceAsync(
+            NotificationPreference.FiveHourUsageReset,
+            enabled);
+        if (saved && notificationPreferenceChanged is not null)
+        {
+            await notificationPreferenceChanged(
+                NotificationPreference.FiveHourUsageReset,
+                enabled);
+        }
+    }
+
+    private async void OnCreditGrantedNotificationClick(
+        object sender,
+        RoutedEventArgs eventArgs)
+    {
+        var checkBox = (System.Windows.Controls.CheckBox)sender;
+        var enabled = checkBox.IsChecked == true;
+        var saved = await viewModel.SetNotificationPreferenceAsync(
+            NotificationPreference.CreditGranted,
+            enabled);
+        if (saved && notificationPreferenceChanged is not null)
+        {
+            await notificationPreferenceChanged(
+                NotificationPreference.CreditGranted,
+                enabled);
         }
     }
 

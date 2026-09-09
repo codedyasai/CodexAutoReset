@@ -13,6 +13,13 @@ public enum UiLanguage
     English,
 }
 
+public enum NotificationPreference
+{
+    WeeklyUsageReset,
+    FiveHourUsageReset,
+    CreditGranted,
+}
+
 public sealed record GuardSettings(
     int? RemainingThresholdPercent,
     int PollIntervalMinutes,
@@ -20,9 +27,11 @@ public sealed record GuardSettings(
     bool StartWithWindows,
     string? CodexExecutablePath,
     bool AutomationEnabled = false,
-    bool NotifyOnUsageReset = true,
+    bool NotifyOnWeeklyUsageReset = true,
     int? FiveHourRemainingThresholdPercent = null,
-    bool FiveHourAutomationEnabled = false)
+    bool FiveHourAutomationEnabled = false,
+    bool NotifyOnFiveHourUsageReset = true,
+    bool NotifyOnCreditGranted = true)
 {
     public const int MinimumThreshold = 0;
     public const int MaximumThreshold = 99;
@@ -37,9 +46,13 @@ public sealed record GuardSettings(
         StartWithWindows: false,
         CodexExecutablePath: null,
         AutomationEnabled: false,
-        NotifyOnUsageReset: true,
+        NotifyOnWeeklyUsageReset: true,
         FiveHourRemainingThresholdPercent: null,
-        FiveHourAutomationEnabled: false);
+        FiveHourAutomationEnabled: false,
+        NotifyOnFiveHourUsageReset: true,
+        NotifyOnCreditGranted: true);
+
+    public bool NotifyOnUsageReset => NotifyOnWeeklyUsageReset;
 
     public int? WeeklyRemainingThresholdPercent => RemainingThresholdPercent;
 

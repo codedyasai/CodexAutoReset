@@ -247,7 +247,7 @@ public sealed class UsageResetNotificationCoordinatorTests
     }
 
     [TestMethod]
-    public async Task QueuedNotificationsAreShownOneAtATime()
+    public async Task NewestEarlyNotificationReplacesOlderPendingNotifications()
     {
         using var directory = TestDirectory.Create();
         var tracker = await CreateTrackerWithPendingAsync(directory);
@@ -273,16 +273,203 @@ public sealed class UsageResetNotificationCoordinatorTests
 
         Assert.AreEqual(1, presenter.ShowCount);
         Assert.AreEqual(1, presenter.Requests.Count);
-        var firstEventId = presenter.Requests[0].NotificationId;
+        Assert.AreEqual(1, (await tracker.LoadPendingNotificationsAsync(CancellationToken.None)).Count);
 
         Assert.IsTrue(await presenter.ConfirmAsync());
         await coordinator.RefreshAsync(CancellationToken.None);
 
+        Assert.AreEqual(1, presenter.ShowCount);
+        Assert.IsFalse(presenter.IsVisible);
+    }
+
+    [TestMethod]
+    [DataRow(true, true, true)]
+    [DataRow(true, false, true)]
+    [DataRow(false, true, false)]
+    public async Task SimultaneousResetsRespectPreferencesAndWeeklyPriority(
+        bool weeklyEnabled, bool fiveHourEnabled, bool expectWeekly)
+    {
+        using var directory = TestDirectory.Create();
+        var weekly = await CreateTrackerWithPendingAsync(directory);
+        var supplemental = new JsonSupplementalNotificationTracker(
+            Path.Combine(directory.Path, "supplemental-notification-state.json"));
+        await ObserveFiveHourAsync(supplemental, 40, Now.AddHours(5), Now);
+        await ObserveFiveHourAsync(supplemental, 100, Now.AddHours(10), Now.AddMinutes(1));
+        var presenter = new FakePresenter();
+        await using var coordinator = new UsageResetNotificationCoordinator(weekly, presenter, supplemental);
+        await coordinator.InitializeAsync(weeklyEnabled, fiveHourEnabled, false, CancellationToken.None);
+        var weeklyId = (await weekly.LoadPendingNotificationsAsync(CancellationToken.None)).FirstOrDefault()?.EventId;
+        Assert.AreEqual(expectWeekly, presenter.Requests.Single().NotificationId == weeklyId);
+        Assert.IsTrue(await presenter.ConfirmAsync());
+        await coordinator.RefreshAsync(CancellationToken.None);
+        Assert.AreEqual(1, presenter.ShowCount);
+    }
+
+    [TestMethod]
+    public async Task EarlyResetSurvivesLaterScheduledResetButNewEarlyReplacesIt()
+    {
+        using var directory = TestDirectory.Create();
+        var weekly = await CreateTrackerWithPendingAsync(directory);
+        var supplemental = new JsonSupplementalNotificationTracker(
+            Path.Combine(directory.Path, "supplemental-notification-state.json"));
+        var presenter = new FakePresenter();
+        await using var coordinator = new UsageResetNotificationCoordinator(weekly, presenter, supplemental);
+        await coordinator.InitializeAsync(true, true, false, CancellationToken.None);
+        await ObserveFiveHourAsync(supplemental, 40, Now.AddHours(5), Now);
+        await ObserveFiveHourAsync(supplemental, 100, Now.AddHours(10), Now.AddHours(5));
+        await coordinator.RefreshAsync(CancellationToken.None);
+        Assert.AreEqual(1, presenter.ShowCount);
+        Assert.AreEqual(0, (await supplemental.LoadPendingNotificationsAsync(CancellationToken.None)).Count);
+        await ObserveFiveHourAsync(supplemental, 40, Now.AddHours(10), Now.AddHours(6));
+        await ObserveFiveHourAsync(supplemental, 100, Now.AddHours(11), Now.AddHours(7));
+        await coordinator.RefreshAsync(CancellationToken.None);
         Assert.AreEqual(2, presenter.ShowCount);
-        Assert.IsTrue(presenter.IsVisible);
-        Assert.AreNotEqual(
-            firstEventId,
-            presenter.Requests[1].NotificationId);
+        StringAssert.Contains(presenter.Requests.Last().Title, "5시간");
+        Assert.AreEqual(0, (await weekly.LoadPendingNotificationsAsync(CancellationToken.None)).Count);
+    }
+
+    [TestMethod]
+    public async Task LatestScheduledResetReplacesVisibleResetAndDoesNotReturnAfterRestart()
+    {
+        using var directory = TestDirectory.Create();
+        var weekly = new JsonWeeklyUsageResetTracker(Path.Combine(directory.Path, "usage-reset-state.json"));
+        var supplemental = new JsonSupplementalNotificationTracker(Path.Combine(directory.Path, "supplemental-notification-state.json"));
+        await ObserveFiveHourAsync(supplemental, 40, Now.AddHours(5), Now);
+        await ObserveFiveHourAsync(supplemental, 100, Now.AddHours(10), Now.AddHours(5));
+        var presenter = new FakePresenter();
+        await using var coordinator = new UsageResetNotificationCoordinator(weekly, presenter, supplemental);
+        await coordinator.InitializeAsync(true, true, false, CancellationToken.None);
+        await ObserveFiveHourAsync(supplemental, 40, Now.AddHours(10), Now.AddHours(6));
+        await ObserveFiveHourAsync(supplemental, 100, Now.AddHours(15), Now.AddHours(10));
+        await coordinator.RefreshAsync(CancellationToken.None);
+        Assert.AreEqual(2, presenter.ShowCount);
+        Assert.AreNotEqual(presenter.Requests[0].NotificationId, presenter.Requests[1].NotificationId);
+        Assert.AreEqual(1, (await new JsonSupplementalNotificationTracker(Path.Combine(directory.Path, "supplemental-notification-state.json"))
+            .LoadPendingNotificationsAsync(CancellationToken.None)).Count);
+        Assert.IsTrue(await presenter.ConfirmAsync());
+        await coordinator.RefreshAsync(CancellationToken.None);
+        Assert.AreEqual(2, presenter.ShowCount);
+    }
+
+    private static async Task ObserveFiveHourAsync(
+        JsonSupplementalNotificationTracker tracker, double remaining,
+        DateTimeOffset resetsAt, DateTimeOffset observedAt)
+    {
+        _ = await tracker.ObserveAsync(
+            new WindowReading(100 - remaining, remaining, 300, 300, resetsAt.ToUnixTimeSeconds()),
+            new ResetCreditSummary(0, []), observedAt, WeeklyUsageResetAttribution.None,
+            true, true, CancellationToken.None);
+    }
+
+    [TestMethod]
+    public async Task CreditGrantPopupUsesItsIndependentPreference()
+    {
+        using var directory = TestDirectory.Create();
+        var weeklyTracker = new JsonWeeklyUsageResetTracker(
+            Path.Combine(directory.Path, "usage-reset-state.json"));
+        var supplementalTracker = new JsonSupplementalNotificationTracker(
+            Path.Combine(
+                directory.Path,
+                "supplemental-notification-state.json"));
+        _ = await supplementalTracker.ObserveAsync(
+            fiveHour: null,
+            new ResetCreditSummary(0, []),
+            Now,
+            WeeklyUsageResetAttribution.None,
+            fiveHourNotificationsEnabled: true,
+            creditNotificationsEnabled: true,
+            CancellationToken.None);
+        _ = await supplementalTracker.ObserveAsync(
+            fiveHour: null,
+            new ResetCreditSummary(
+                1,
+                [
+                    new ResetCredit(
+                        "new-credit",
+                        "codexRateLimits",
+                        "available",
+                        Now.ToUnixTimeSeconds(),
+                        Now.AddDays(7).ToUnixTimeSeconds(),
+                        null,
+                        null),
+                ]),
+            Now.AddMinutes(1),
+            WeeklyUsageResetAttribution.None,
+            fiveHourNotificationsEnabled: true,
+            creditNotificationsEnabled: true,
+            CancellationToken.None);
+        var presenter = new FakePresenter();
+        await using var coordinator = new UsageResetNotificationCoordinator(
+            weeklyTracker,
+            presenter,
+            supplementalTracker);
+
+        await coordinator.InitializeAsync(
+            weeklyEnabled: false,
+            fiveHourEnabled: false,
+            creditGrantedEnabled: true,
+            CancellationToken.None);
+
+        Assert.AreEqual(1, presenter.ShowCount);
+        StringAssert.Contains(presenter.Requests.Single().Title, "초기화권 신규 지급");
+        Assert.IsTrue(await presenter.ConfirmAsync());
+        Assert.AreEqual(
+            0,
+            (await supplementalTracker.LoadPendingNotificationsAsync(
+                CancellationToken.None)).Count);
+    }
+
+    [TestMethod]
+    public async Task FiveHourResetPopupUsesItsIndependentPreference()
+    {
+        using var directory = TestDirectory.Create();
+        var weeklyTracker = new JsonWeeklyUsageResetTracker(
+            Path.Combine(directory.Path, "usage-reset-state.json"));
+        var supplementalTracker = new JsonSupplementalNotificationTracker(
+            Path.Combine(
+                directory.Path,
+                "supplemental-notification-state.json"));
+        var resetAt = Now.AddHours(5);
+        _ = await supplementalTracker.ObserveAsync(
+            new WindowReading(
+                UsedPercent: 60,
+                RemainingPercent: 40,
+                ReportedDurationMinutes: 300,
+                NormalizedDurationMinutes: 300,
+                ResetsAt: resetAt.ToUnixTimeSeconds()),
+            new ResetCreditSummary(0, []),
+            Now,
+            WeeklyUsageResetAttribution.None,
+            fiveHourNotificationsEnabled: true,
+            creditNotificationsEnabled: true,
+            CancellationToken.None);
+        _ = await supplementalTracker.ObserveAsync(
+            new WindowReading(
+                UsedPercent: 0,
+                RemainingPercent: 100,
+                ReportedDurationMinutes: 300,
+                NormalizedDurationMinutes: 300,
+                ResetsAt: resetAt.AddHours(5).ToUnixTimeSeconds()),
+            new ResetCreditSummary(0, []),
+            Now.AddMinutes(1),
+            WeeklyUsageResetAttribution.None,
+            fiveHourNotificationsEnabled: true,
+            creditNotificationsEnabled: true,
+            CancellationToken.None);
+        var presenter = new FakePresenter();
+        await using var coordinator = new UsageResetNotificationCoordinator(
+            weeklyTracker,
+            presenter,
+            supplementalTracker);
+
+        await coordinator.InitializeAsync(
+            weeklyEnabled: false,
+            fiveHourEnabled: true,
+            creditGrantedEnabled: false,
+            CancellationToken.None);
+
+        Assert.AreEqual(1, presenter.ShowCount);
+        StringAssert.Contains(presenter.Requests.Single().Title, "5시간");
     }
 
     private static async Task<JsonWeeklyUsageResetTracker>

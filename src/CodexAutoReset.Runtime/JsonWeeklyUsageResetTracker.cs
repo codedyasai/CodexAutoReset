@@ -379,6 +379,15 @@ public sealed class JsonWeeklyUsageResetTracker
             cancellationToken).ConfigureAwait(false);
     }
 
+    public Task<bool> SuppressNotificationsAsync(
+        IReadOnlySet<string> eventIds,
+        DateTimeOffset suppressedAt,
+        CancellationToken cancellationToken) => ResolveNotificationsAsync(
+            notification => eventIds.Contains(notification.EventId),
+            StoredNotificationAttentionState.Suppressed,
+            suppressedAt,
+            cancellationToken);
+
     public Task<bool> SuppressPendingNotificationsAsync(
         DateTimeOffset suppressedAt,
         CancellationToken cancellationToken)

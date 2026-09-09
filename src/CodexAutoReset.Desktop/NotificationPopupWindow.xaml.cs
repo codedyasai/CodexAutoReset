@@ -37,7 +37,7 @@ public partial class NotificationPopupWindow : Window
             : Visibility.Collapsed;
         AutomationProperties.SetName(
             this,
-            $"CodexAutoReset 사용량 초기화 알림: {request.Title}");
+            $"CodexAutoReset 알림: {request.Title}");
     }
 
     internal void SetConfirmationInProgress()

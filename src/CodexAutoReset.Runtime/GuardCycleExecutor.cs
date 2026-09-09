@@ -23,6 +23,7 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
     private readonly ResetDecisionEngine decisionEngine = new();
     private readonly JsonLiveAttemptStore liveStore;
     private readonly JsonWeeklyUsageResetTracker weeklyUsageResetTracker;
+    private readonly JsonSupplementalNotificationTracker supplementalNotificationTracker;
     private readonly SafeJsonlLogger logger;
     private readonly LiveResetSafetyLatch liveSafetyLatch;
     private string? readCompatibilityCandidateCode;
@@ -43,11 +44,24 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
         JsonWeeklyUsageResetTracker weeklyUsageResetTracker)
         : this(
             paths,
+            weeklyUsageResetTracker,
+            new JsonSupplementalNotificationTracker(
+                paths.SupplementalNotificationStateFile))
+    {
+    }
+
+    public GuardCycleExecutor(
+        RuntimePaths paths,
+        JsonWeeklyUsageResetTracker weeklyUsageResetTracker,
+        JsonSupplementalNotificationTracker supplementalNotificationTracker)
+        : this(
+            paths,
             new CodexRateLimitClientFactory(),
             new DpapiSecretProtector(),
             AppServerLiveResetFailureClassifier.Instance,
             TimeProvider.System,
-            weeklyUsageResetTracker)
+            weeklyUsageResetTracker,
+            supplementalNotificationTracker)
     {
     }
 
@@ -57,7 +71,8 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
         ISecretProtector secretProtector,
         ILiveResetFailureClassifier failureClassifier,
         TimeProvider timeProvider,
-        JsonWeeklyUsageResetTracker? weeklyUsageResetTracker = null)
+        JsonWeeklyUsageResetTracker? weeklyUsageResetTracker = null,
+        JsonSupplementalNotificationTracker? supplementalNotificationTracker = null)
     {
         ArgumentNullException.ThrowIfNull(paths);
         this.clientFactory = clientFactory
@@ -70,6 +85,9 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
         liveStore = new JsonLiveAttemptStore(paths.LiveStateFile);
         this.weeklyUsageResetTracker = weeklyUsageResetTracker
             ?? new JsonWeeklyUsageResetTracker(paths.UsageResetStateFile);
+        this.supplementalNotificationTracker = supplementalNotificationTracker
+            ?? new JsonSupplementalNotificationTracker(
+                paths.SupplementalNotificationStateFile);
         liveSafetyLatch = new LiveResetSafetyLatch(
             paths.LiveSafetyBlockFile,
             CompatibilityRevision);
@@ -112,9 +130,18 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
                 snapshot,
                 initialEvaluation.Weekly,
                 WeeklyUsageResetAttribution.None,
-                settings.NotifyOnUsageReset,
+                settings.NotifyOnWeeklyUsageReset,
                 cancellationToken).ConfigureAwait(false);
             var usageResetDetection = usageResetTracking?.Detection;
+            await TryObserveSupplementalAsync(
+                snapshot,
+                initialEvaluation.FiveHour,
+                WeeklyUsageResetAttribution.None,
+                settings,
+                suppressFiveHourNotification:
+                    usageResetTracking?.Detection is not null
+                    && settings.NotifyOnWeeklyUsageReset,
+                cancellationToken).ConfigureAwait(false);
 
             GuardCycleResult result;
             var semanticCompatibilityCode =
@@ -286,17 +313,32 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
                     result.ActionKind == CycleActionKind.ResetSucceeded
                         ? WeeklyUsageResetAttribution.AutomaticCreditSucceeded
                         : WeeklyUsageResetAttribution.None,
-                    settings.NotifyOnUsageReset,
+                    settings.NotifyOnWeeklyUsageReset,
                     result.ActionKind == CycleActionKind.ResetSucceeded
                         ? CancellationToken.None
                         : cancellationToken).ConfigureAwait(false);
                 usageResetDetection = PreferUsageResetDetection(
                     usageResetDetection,
                     refreshedTracking?.Detection);
+                await TryObserveSupplementalAsync(
+                    result.AccountRateLimits,
+                    result.Evaluation.FiveHour,
+                    result.ActionKind == CycleActionKind.ResetSucceeded
+                        ? WeeklyUsageResetAttribution.AutomaticCreditSucceeded
+                        : WeeklyUsageResetAttribution.None,
+                    settings,
+                    suppressFiveHourNotification:
+                        refreshedTracking?.Detection is not null
+                        && settings.NotifyOnWeeklyUsageReset,
+                    result.ActionKind == CycleActionKind.ResetSucceeded
+                        ? CancellationToken.None
+                        : cancellationToken).ConfigureAwait(false);
             }
             else if (result.ActionKind == CycleActionKind.ResetSucceeded)
             {
                 await TryMarkAutomaticCreditSucceededAsync(
+                    timeProvider.GetUtcNow()).ConfigureAwait(false);
+                await TryMarkSupplementalAutomaticCreditSucceededAsync(
                     timeProvider.GetUtcNow()).ConfigureAwait(false);
             }
 
@@ -375,6 +417,50 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
         try
         {
             _ = await weeklyUsageResetTracker.MarkAutomaticCreditSucceededAsync(
+                succeededAt,
+                CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (!IsFatal(exception))
+        {
+        }
+    }
+
+    private async Task TryObserveSupplementalAsync(
+        AccountRateLimits snapshot,
+        WindowReading? fiveHour,
+        WeeklyUsageResetAttribution attribution,
+        GuardSettings settings,
+        bool suppressFiveHourNotification,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            _ = await supplementalNotificationTracker.ObserveAsync(
+                fiveHour,
+                snapshot.ResetCredits,
+                snapshot.ObservedAt,
+                attribution,
+                settings.NotifyOnFiveHourUsageReset
+                    && !suppressFiveHourNotification,
+                settings.NotifyOnCreditGranted,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+            when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception) when (!IsFatal(exception))
+        {
+        }
+    }
+
+    private async Task TryMarkSupplementalAutomaticCreditSucceededAsync(
+        DateTimeOffset succeededAt)
+    {
+        try
+        {
+            await supplementalNotificationTracker.MarkAutomaticCreditSucceededAsync(
                 succeededAt,
                 CancellationToken.None).ConfigureAwait(false);
         }

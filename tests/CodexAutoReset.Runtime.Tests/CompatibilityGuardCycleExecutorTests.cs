@@ -207,8 +207,14 @@ public sealed class CompatibilityGuardCycleExecutorTests
         Assert.AreEqual(0, factory.ConsumeCount);
     }
 
-    [TestMethod]
-    public async Task AdditiveReadSchemaStillDisplaysUsageButBlocksMutation()
+    [DataTestMethod]
+    [DataRow("95.0", 5.0, 1)]
+    [DataRow("95.5", 4.5, 1)]
+    [DataRow("92.99", 7.01, 0)]
+    public async Task AdditiveAccountMetadataAndDecimalUsagePreserveThresholdAndSingleUse(
+        string usedPercentJson,
+        double expectedRemaining,
+        int expectedConsumeCount)
     {
         var resetAt = InitialNow.AddDays(6).ToUnixTimeSeconds();
         var grantedAt = InitialNow.AddMinutes(-1).ToUnixTimeSeconds();
@@ -218,10 +224,17 @@ public sealed class CompatibilityGuardCycleExecutorTests
             {
               "rateLimits": {
                 "limitId": "codex",
+                "planType": "future_plan",
+                "rateLimitReachedType": "future_reason",
+                "individualLimit": {
+                  "limit": "100", "used": "25", "remainingPercent": 75.0,
+                  "resetsAt": {{resetAt}}, "extraMetadata": true
+                },
                 "secondary": {
-                  "usedPercent": 95,
+                  "usedPercent": {{usedPercentJson}},
                   "windowDurationMins": 10080,
-                  "resetsAt": {{resetAt}}
+                  "resetsAt": {{resetAt}},
+                  "extraMetadata": true
                 }
               },
               "rateLimitResetCredits": {
@@ -232,7 +245,8 @@ public sealed class CompatibilityGuardCycleExecutorTests
                     "resetType": "codexRateLimits",
                     "status": "available",
                     "grantedAt": {{grantedAt}},
-                    "expiresAt": {{expiresAt}}
+                    "expiresAt": {{expiresAt}},
+                    "extraMetadata": true
                   }
                 ]
               },
@@ -254,11 +268,39 @@ public sealed class CompatibilityGuardCycleExecutorTests
             settings,
             CancellationToken.None);
 
-        Assert.IsFalse(snapshot.ConsumeSchemaCompatible);
+        Assert.IsTrue(snapshot.ConsumeSchemaCompatible);
+        Assert.AreNotEqual("mutation_schema_unverified", result.ActionCode);
+        Assert.AreEqual(expectedRemaining, result.Evaluation.Weekly!.RemainingPercent, 0.000001);
+        Assert.AreEqual(expectedConsumeCount, factory.ConsumeCount);
+
+        await executor.ExecuteAsync(settings, CancellationToken.None);
+        Assert.AreEqual(expectedConsumeCount, factory.ConsumeCount,
+            "An unchanged snapshot must not spend a second credit.");
+    }
+
+    [DataTestMethod]
+    [DataRow(ConsumeSchemaIssue.ServerIdentityUnverified, "server_identity_unverified")]
+    [DataRow(ConsumeSchemaIssue.ResetCreditTypeUnrecognized, "reset_credit_type_unrecognized")]
+    [DataRow(ConsumeSchemaIssue.ResetCreditStatusUnrecognized, "reset_credit_status_unrecognized")]
+    public async Task CompatibilityWarningsPersistOnlySafeReasonAndCount(
+        ConsumeSchemaIssue issue,
+        string expectedReason)
+    {
+        var snapshot = CreateCompatibleSnapshot(95, consumeSchemaCompatible: false) with
+        {
+            ConsumeSchemaIssue = issue,
+        };
+        var factory = new CompatibilityClientFactory(snapshot);
+        var result = await CreateExecutor(factory).ExecuteAsync(
+            GuardSettings.Default with { RemainingThresholdPercent = 7, AutomationEnabled = true },
+            CancellationToken.None);
+
         Assert.AreEqual("mutation_schema_unverified", result.ActionCode);
-        Assert.AreEqual(CycleActionKind.Blocked, result.ActionKind);
-        Assert.AreEqual(5d, result.Evaluation.Weekly?.RemainingPercent);
         Assert.AreEqual(0, factory.ConsumeCount);
+        var log = await File.ReadAllTextAsync(Directory.GetFiles(paths.LogDirectory, "*.jsonl").Single());
+        StringAssert.Contains(log, $"\"reasonCode\":\"{expectedReason}\"");
+        StringAssert.Contains(log, "\"availableCreditCount\":1");
+        Assert.IsFalse(log.Contains("private-credit-id", StringComparison.Ordinal));
     }
 
     [TestMethod]

@@ -109,12 +109,23 @@ public sealed record ResetCreditSummary(
     long AvailableCount,
     IReadOnlyList<ResetCredit>? Credits);
 
+public enum ConsumeSchemaIssue
+{
+    None,
+    ServerIdentityUnverified,
+    ResetCreditTypeUnrecognized,
+    ResetCreditStatusUnrecognized,
+}
+
 public sealed record AccountRateLimits(
     RateLimitSnapshot LegacyRateLimits,
     IReadOnlyDictionary<string, RateLimitSnapshot>? RateLimitsByLimitId,
     ResetCreditSummary? ResetCredits,
     DateTimeOffset ObservedAt,
-    bool ConsumeSchemaCompatible = true);
+    bool ConsumeSchemaCompatible = true)
+{
+    public ConsumeSchemaIssue ConsumeSchemaIssue { get; init; }
+}
 
 public sealed record WindowReading(
     double UsedPercent,

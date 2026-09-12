@@ -148,6 +148,12 @@ public sealed class SafeLoggerTests
     [DataRow("usage_reset_settling", "threshold_reached")]
     [DataRow("usage_reset_state_unavailable", "threshold_reached")]
     [DataRow("scheduled_reset_imminent", "scheduled_reset_imminent")]
+    [DataRow("mutation_schema_unverified", "mutation_schema_unverified")]
+    [DataRow("mutation_schema_unverified", "server_identity_unverified")]
+    [DataRow("mutation_schema_unverified", "reset_credit_type_unrecognized")]
+    [DataRow("mutation_schema_unverified", "reset_credit_status_unrecognized")]
+    [DataRow("protocol_read_unsupported", "selected_window_missing")]
+    [DataRow("protocol_verification_pending", "selected_window_missing")]
     public async Task LoggerAcceptsSafetyOutcomes(
         string outcome,
         string reasonCode)

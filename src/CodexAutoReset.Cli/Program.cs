@@ -748,6 +748,8 @@ internal static class Program
     private static void PrintProtocolDiagnostics(AccountRateLimits snapshot)
     {
         Console.WriteLine("Protocol diagnostics (no account or credit identifiers):");
+        Console.WriteLine($"  consume-schema-compatible: {snapshot.ConsumeSchemaCompatible}");
+        Console.WriteLine($"  consume-schema-issue: {snapshot.ConsumeSchemaIssue}");
         PrintSnapshotDiagnostics("legacy", snapshot.LegacyRateLimits);
 
         if (snapshot.RateLimitsByLimitId is not null)

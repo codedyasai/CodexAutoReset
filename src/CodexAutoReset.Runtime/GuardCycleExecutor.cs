@@ -600,7 +600,9 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
                     timeProvider.GetUtcNow(),
                     eventType,
                     ToLogOutcome(result.ActionCode),
-                    ToCode(result.Evaluation.Decision.Reason),
+                    result.ActionCode == "mutation_schema_unverified"
+                        ? ToCompatibilityReasonCode(result.AccountRateLimits.ConsumeSchemaIssue)
+                        : ToCode(result.Evaluation.Decision.Reason),
                     ToTriggerCode(result.Evaluation.Decision.SelectedLimit),
                     result.Evaluation.Decision.TriggerWindow?.RemainingPercent,
                     result.Evaluation.Decision.SelectedLimit is { } selectedLimit
@@ -823,6 +825,14 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
             return LiveResetFailureDisposition.Unknown;
         }
     }
+
+    private static string ToCompatibilityReasonCode(ConsumeSchemaIssue issue) => issue switch
+    {
+        ConsumeSchemaIssue.ServerIdentityUnverified => "server_identity_unverified",
+        ConsumeSchemaIssue.ResetCreditTypeUnrecognized => "reset_credit_type_unrecognized",
+        ConsumeSchemaIssue.ResetCreditStatusUnrecognized => "reset_credit_status_unrecognized",
+        _ => "mutation_schema_unverified",
+    };
 
     private static string ToLogOutcome(string actionCode) => actionCode switch
     {

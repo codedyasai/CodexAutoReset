@@ -12,7 +12,7 @@ public sealed class ProtocolParserTests
     public void LiveConsumeSchemaIsPinnedToGeneratedCodexVersion()
     {
         Assert.AreEqual(
-            "0.144.5",
+            "0.153.4",
             AppServerProtocolParser.AuditedConsumeSchemaVersion);
     }
 
@@ -89,6 +89,7 @@ public sealed class ProtocolParserTests
 
         Assert.IsTrue(compatibleByDefault.ConsumeSchemaCompatible);
         Assert.IsFalse(incompatible.ConsumeSchemaCompatible);
+        Assert.AreEqual(ConsumeSchemaIssue.ServerIdentityUnverified, incompatible.ConsumeSchemaIssue);
     }
 
     [TestMethod]
@@ -128,18 +129,19 @@ public sealed class ProtocolParserTests
     [DataTestMethod]
     [DataRow("{\"rateLimits\":{},\"unexpected\":true}")]
     [DataRow("{\"rateLimits\":{\"unexpected\":true}}")]
+    [DataRow("{\"rateLimits\":{},\"accountId\":\"synthetic-account\",\"rateLimitUpsell\":{\"banner\":true}}")]
+    [DataRow("{\"rateLimits\":{\"planType\":\"self_serve_business_prolite\",\"spendControlReached\":null}}")]
+    [DataRow("{\"rateLimits\":{\"planType\":\"edu_plus\",\"spendControlReached\":false}}")]
     [DataRow("{\"rateLimits\":{\"planType\":\"future_plan\"}}")]
     [DataRow("{\"rateLimits\":{\"rateLimitReachedType\":\"future_limit_reason\"}}")]
     [DataRow("{\"rateLimits\":{\"individualLimit\":{\"limit\":\"1\",\"remainingPercent\":1.5,\"resetsAt\":2,\"used\":\"0\"}}}")]
     [DataRow("{\"rateLimits\":{},\"rateLimitsByLimitId\":{\"codex\":{\"unexpected\":true}}}")]
     [DataRow("{\"rateLimits\":{},\"rateLimitResetCredits\":{\"availableCount\":1,\"unexpected\":true}}")]
-    [DataRow("{\"rateLimits\":{},\"rateLimitResetCredits\":{\"availableCount\":1,\"credits\":[{\"id\":\"id\",\"resetType\":\"future\",\"status\":\"available\",\"grantedAt\":1}]}}")]
-    [DataRow("{\"rateLimits\":{},\"rateLimitResetCredits\":{\"availableCount\":1,\"credits\":[{\"id\":\"id\",\"resetType\":\"codexRateLimits\",\"status\":\"future\",\"grantedAt\":1}]}}")]
     [DataRow("{\"rateLimits\":{\"primary\":{\"usedPercent\":25,\"futureWindowField\":true}}}")]
     [DataRow("{\"rateLimits\":{\"credits\":{\"hasCredits\":true,\"unlimited\":false,\"futureCreditsField\":true}}}")]
     [DataRow("{\"rateLimits\":{\"individualLimit\":{\"limit\":\"1\",\"remainingPercent\":1,\"resetsAt\":2,\"used\":\"0\",\"futureSpendField\":true}}}")]
     [DataRow("{\"rateLimits\":{},\"rateLimitResetCredits\":{\"availableCount\":1,\"credits\":[{\"id\":\"id\",\"resetType\":\"codexRateLimits\",\"status\":\"available\",\"grantedAt\":1,\"futureCreditField\":true}]}}")]
-    public void AdditiveOrUnrecognizedReadFieldsRemainReadableButDisableMutation(
+    public void AdditiveReadFieldsAndDescriptiveValuesKeepKnownSchemaCompatible(
         string json)
     {
         using var document = JsonDocument.Parse(json);
@@ -149,7 +151,49 @@ public sealed class ProtocolParserTests
             DateTimeOffset.UtcNow);
 
         Assert.IsNotNull(parsed.LegacyRateLimits);
+        Assert.IsTrue(parsed.ConsumeSchemaCompatible);
+        Assert.AreEqual(ConsumeSchemaIssue.None, parsed.ConsumeSchemaIssue);
+
+        var unverifiedServer = AppServerProtocolParser.ParseRateLimits(
+            document.RootElement,
+            DateTimeOffset.UtcNow,
+            consumeSchemaCompatible: false);
+        Assert.IsFalse(unverifiedServer.ConsumeSchemaCompatible);
+        Assert.AreEqual(ConsumeSchemaIssue.ServerIdentityUnverified, unverifiedServer.ConsumeSchemaIssue);
+    }
+
+    [DataTestMethod]
+    [DataRow("future", "available", ConsumeSchemaIssue.ResetCreditTypeUnrecognized)]
+    [DataRow("codexRateLimits", "future", ConsumeSchemaIssue.ResetCreditStatusUnrecognized)]
+    public void UnknownCreditSemanticsRemainReadableButDisableMutation(
+        string resetType,
+        string status,
+        ConsumeSchemaIssue expectedIssue)
+    {
+        using var document = JsonDocument.Parse(
+            $$"""
+            {
+              "rateLimits": {},
+              "rateLimitResetCredits": {
+                "availableCount": 1,
+                "credits": [{
+                  "id": "private-credit-id",
+                  "resetType": "{{resetType}}",
+                  "status": "{{status}}",
+                  "grantedAt": 1,
+                  "extraMetadata": true
+                }]
+              }
+            }
+            """);
+        var parsed = AppServerProtocolParser.ParseRateLimits(
+            document.RootElement,
+            DateTimeOffset.UtcNow);
+
+        Assert.AreEqual(1L, parsed.ResetCredits!.AvailableCount);
+        Assert.AreEqual(1, parsed.ResetCredits.Credits!.Count);
         Assert.IsFalse(parsed.ConsumeSchemaCompatible);
+        Assert.AreEqual(expectedIssue, parsed.ConsumeSchemaIssue);
     }
 
     [DataTestMethod]
@@ -178,6 +222,7 @@ public sealed class ProtocolParserTests
     [DataTestMethod]
     [DataRow("{\"rateLimits\":{},\"rateLimits\":{}}")]
     [DataRow("{\"rateLimits\":{\"primary\":{\"usedPercent\":1,\"usedPercent\":2}}}")]
+    [DataRow("{\"rateLimits\":{},\"newMetadata\":{\"value\":1,\"value\":2}}")]
     public void DuplicateResponseMembersFailClosed(string json)
     {
         using var document = JsonDocument.Parse(json);
@@ -292,7 +337,11 @@ public sealed class ProtocolParserTests
     [DataTestMethod]
     [DataRow("25.5", 25.5)]
     [DataRow("25.0", 25.0)]
-    public void FiniteFractionalUsedPercentRemainsReadableButDisablesMutation(
+    [DataRow("2.5e1", 25.0)]
+    [DataRow("0.0", 0.0)]
+    [DataRow("100.0", 100.0)]
+    [DataRow("99.9", 99.9)]
+    public void FiniteNumericUsedPercentKeepsExactValueAndCompatibility(
         string usedPercentJson,
         double expected)
     {
@@ -312,7 +361,7 @@ public sealed class ProtocolParserTests
             DateTimeOffset.UtcNow);
 
         Assert.AreEqual(expected, parsed.LegacyRateLimits.Primary!.UsedPercent);
-        Assert.IsFalse(parsed.ConsumeSchemaCompatible);
+        Assert.IsTrue(parsed.ConsumeSchemaCompatible);
     }
 
     [DataTestMethod]
@@ -391,11 +440,15 @@ public sealed class ProtocolParserTests
         Assert.AreEqual(AppServerFailureCategory.InvalidResponse, exception.Category);
     }
 
-    [TestMethod]
-    public void InitializeResponseAcceptsNormalExternalClientOriginator()
+    [DataTestMethod]
+    [DataRow("codex_auto_reset", "0.144.5")]
+    [DataRow("Codex Desktop", "0.144.5")]
+    [DataRow("codex_auto_reset", "0.153.4")]
+    [DataRow("Codex Desktop", "0.153.4")]
+    public void InitializeResponseAcceptsAuditedVersionsAndOriginators(string product, string version)
     {
         using var response = CreateInitializeResponse(
-            "codex_auto_reset/0.144.5 (Windows 10.0.26200; x86_64) unknown (codex_auto_reset; 0.1.0)");
+            $"{product}/{version} (Windows 10.0.26200; x86_64) unknown (codex_auto_reset; 0.1.0)");
 
         Assert.IsTrue(
             AppServerProtocolParser.ValidateInitializeResult(
@@ -404,7 +457,7 @@ public sealed class ProtocolParserTests
     }
 
     [TestMethod]
-    public void AdditiveInitializeFieldKeepsReadsAvailableButDisablesMutation()
+    public void AdditiveInitializeFieldDoesNotInvalidateVerifiedServer()
     {
         using var response = JsonDocument.Parse(
             """
@@ -417,7 +470,7 @@ public sealed class ProtocolParserTests
             }
             """);
 
-        Assert.IsFalse(
+        Assert.IsTrue(
             AppServerProtocolParser.ValidateInitializeResult(
                 response.RootElement,
                 "0.1.0"));
@@ -448,6 +501,9 @@ public sealed class ProtocolParserTests
     [DataRow("xcodex_auto_reset/0.144.5 (Windows) unknown (codex_auto_reset; 0.1.0)")]
     [DataRow("codex_auto_reset/0.144.50 (Windows) unknown (codex_auto_reset; 0.1.0)")]
     [DataRow("codex_auto_reset/0.145.0 (Windows) unknown (codex_auto_reset; 0.1.0)")]
+    [DataRow("codex_auto_reset/0.153.40 (Windows) unknown (codex_auto_reset; 0.1.0)")]
+    [DataRow("codex_auto_reset/0.153.4-beta (Windows) unknown (codex_auto_reset; 0.1.0)")]
+    [DataRow("codex_auto_reset/0.154.0 (Windows) unknown (codex_auto_reset; 0.1.0)")]
     [DataRow("Codex Desktop/0.144.5 (codex_auto_reset; 0.1.0)")]
     [DataRow("Codex Desktop/0.144.5     (codex_auto_reset; 0.1.0)")]
     [DataRow("codex_auto_reset/0.144.5     (codex_auto_reset; 0.1.0)")]

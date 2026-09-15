@@ -150,6 +150,7 @@ public sealed class SafeLoggerTests
     [DataRow("scheduled_reset_imminent", "scheduled_reset_imminent")]
     [DataRow("mutation_schema_unverified", "mutation_schema_unverified")]
     [DataRow("mutation_schema_unverified", "server_identity_unverified")]
+    [DataRow("mutation_schema_unverified", "reset_contract_unverified")]
     [DataRow("mutation_schema_unverified", "reset_credit_type_unrecognized")]
     [DataRow("mutation_schema_unverified", "reset_credit_status_unrecognized")]
     [DataRow("protocol_read_unsupported", "selected_window_missing")]

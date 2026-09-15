@@ -280,6 +280,7 @@ public sealed class CompatibilityGuardCycleExecutorTests
 
     [DataTestMethod]
     [DataRow(ConsumeSchemaIssue.ServerIdentityUnverified, "server_identity_unverified")]
+    [DataRow(ConsumeSchemaIssue.ResetContractUnverified, "reset_contract_unverified")]
     [DataRow(ConsumeSchemaIssue.ResetCreditTypeUnrecognized, "reset_credit_type_unrecognized")]
     [DataRow(ConsumeSchemaIssue.ResetCreditStatusUnrecognized, "reset_credit_status_unrecognized")]
     public async Task CompatibilityWarningsPersistOnlySafeReasonAndCount(

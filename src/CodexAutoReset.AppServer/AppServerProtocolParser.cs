@@ -83,6 +83,12 @@ public static class AppServerProtocolParser
         JsonElement result,
         string expectedClientVersion)
     {
+        var version = GetInitializedServerVersion(result, expectedClientVersion);
+        return version is not null && AuditedServerVersions.Contains(version, StringComparer.Ordinal);
+    }
+
+    internal static string? GetInitializedServerVersion(JsonElement result, string expectedClientVersion)
+    {
         if (string.IsNullOrWhiteSpace(expectedClientVersion)
             || !IsThreePartVersion(expectedClientVersion))
         {
@@ -110,33 +116,30 @@ public static class AppServerProtocolParser
             $" ({ExpectedClientName}; {expectedClientVersion})";
         if (!userAgent.EndsWith(expectedClientSuffix, StringComparison.Ordinal))
         {
-            return false;
+            return null;
         }
 
         foreach (var product in ExpectedServerProducts)
         {
-            foreach (var version in AuditedServerVersions)
+            var prefix = $"{product}/";
+            if (!userAgent.StartsWith(prefix, StringComparison.Ordinal))
             {
-                var auditedServerPrefix = $"{product}/{version} ";
-                if (!userAgent.StartsWith(
-                        auditedServerPrefix,
-                        StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                var middleLength = userAgent.Length
-                    - auditedServerPrefix.Length
-                    - expectedClientSuffix.Length;
-                return middleLength > 0
-                    && !string.IsNullOrWhiteSpace(
-                        userAgent.Substring(
-                            auditedServerPrefix.Length,
-                            middleLength));
+                continue;
             }
+
+            var separator = userAgent.IndexOf(' ', prefix.Length);
+            if (separator < 0) { return null; }
+            var version = userAgent[prefix.Length..separator];
+            var middleLength = userAgent.Length - separator - 1 - expectedClientSuffix.Length;
+            return version.Length is > 0 and <= 64
+                && char.IsAsciiDigit(version[0])
+                && version.All(character => char.IsAsciiLetterOrDigit(character) || character is '.' or '-' or '+')
+                && middleLength > 0
+                && !string.IsNullOrWhiteSpace(userAgent.Substring(separator + 1, middleLength))
+                ? version : null;
         }
 
-        return false;
+        return null;
     }
 
     private static bool IsThreePartVersion(string value)

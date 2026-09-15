@@ -35,6 +35,7 @@ public sealed class CodexAppServerClient : IAccountRateLimitClient
     private long requestId;
     private bool initialized;
     private bool consumeSchemaCompatible;
+    private ConsumeSchemaIssue initializationIssue;
     private bool disposed;
 
     public CodexAppServerClient(
@@ -93,10 +94,11 @@ public sealed class CodexAppServerClient : IAccountRateLimitClient
                 await EnsureInitializedAsync(timeoutSource.Token).ConfigureAwait(false);
                 var result = await SendRateLimitsReadAsync(timeoutSource.Token)
                     .ConfigureAwait(false);
-                return AppServerProtocolParser.ParseRateLimits(
+                var snapshot = AppServerProtocolParser.ParseRateLimits(
                     result,
                     DateTimeOffset.UtcNow,
                     consumeSchemaCompatible);
+                return consumeSchemaCompatible ? snapshot : snapshot with { ConsumeSchemaIssue = initializationIssue };
             }
             catch (OperationCanceledException exception)
                 when (!cancellationToken.IsCancellationRequested)
@@ -245,6 +247,14 @@ public sealed class CodexAppServerClient : IAccountRateLimitClient
         var result = await ReadResultAsync(id, cancellationToken).ConfigureAwait(false);
         consumeSchemaCompatible =
             AppServerProtocolParser.ValidateInitializeResult(result, ClientVersion);
+        initializationIssue = ConsumeSchemaIssue.ServerIdentityUnverified;
+        if (!consumeSchemaCompatible
+            && AppServerProtocolParser.GetInitializedServerVersion(result, ClientVersion) is { } serverVersion)
+        {
+            initializationIssue = ConsumeSchemaIssue.ResetContractUnverified;
+            consumeSchemaCompatible = await CodexSchemaVerifier.VerifyAsync(
+                executablePath, serverVersion, cancellationToken).ConfigureAwait(false);
+        }
 
         await WriteMessageAsync(
             new { method = InitializedMethod },

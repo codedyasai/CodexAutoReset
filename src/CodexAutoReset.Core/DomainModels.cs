@@ -113,6 +113,7 @@ public enum ConsumeSchemaIssue
 {
     None,
     ServerIdentityUnverified,
+    ResetContractUnverified,
     ResetCreditTypeUnrecognized,
     ResetCreditStatusUnrecognized,
 }

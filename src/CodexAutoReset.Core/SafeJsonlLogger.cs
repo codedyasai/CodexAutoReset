@@ -124,6 +124,7 @@ public sealed class SafeJsonlLogger
             "remote_error",
             "reset_credit_status_unrecognized",
             "reset_credit_type_unrecognized",
+            "reset_contract_unverified",
             "secret_unavailable",
             "server_identity_unverified",
             "selected_window_ambiguous",

@@ -829,6 +829,7 @@ public sealed class GuardCycleExecutor : IGuardCycleExecutor
     private static string ToCompatibilityReasonCode(ConsumeSchemaIssue issue) => issue switch
     {
         ConsumeSchemaIssue.ServerIdentityUnverified => "server_identity_unverified",
+        ConsumeSchemaIssue.ResetContractUnverified => "reset_contract_unverified",
         ConsumeSchemaIssue.ResetCreditTypeUnrecognized => "reset_credit_type_unrecognized",
         ConsumeSchemaIssue.ResetCreditStatusUnrecognized => "reset_credit_status_unrecognized",
         _ => "mutation_schema_unverified",

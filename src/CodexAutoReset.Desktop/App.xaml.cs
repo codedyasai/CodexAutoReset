@@ -19,6 +19,18 @@ public partial class App : System.Windows.Application
     private UsageResetNotificationCoordinator?
         usageResetNotificationCoordinator;
     private bool stopping;
+    internal ChatGptThemeService? Appearance { get; private set; }
+
+    internal async Task RefreshAppearanceAsync()
+    {
+        if (Appearance is null || !await Appearance.RefreshAsync()) { return; }
+        Appearance.ApplyTo(Resources);
+        foreach (Window window in Windows)
+        {
+            Appearance.ApplyTo(window.Resources);
+            if (window is MainWindow main) { main.ApplyHeaderBackdrop(); }
+        }
+    }
 
     protected override async void OnStartup(StartupEventArgs eventArgs)
     {
@@ -141,6 +153,8 @@ public partial class App : System.Windows.Application
                 startupService,
                 monitor,
                 settings);
+            Appearance = ChatGptThemeService.CreateDefault();
+            await RefreshAppearanceAsync();
             var window = new MainWindow(
                 viewModel,
                 SetNotificationPreferenceEnabledAsync);

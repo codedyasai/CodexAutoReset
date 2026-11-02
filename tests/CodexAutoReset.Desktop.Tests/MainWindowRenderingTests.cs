@@ -710,6 +710,7 @@ public sealed class MainWindowRenderingTests
                 Assert.AreSame(usageHeaderGrid, refreshPanel.Parent);
 
                 NotificationPopupWindowTestAssertions.Run(window);
+                AssertThemeUpdatesExistingWindows(window, app);
                 completed = window.IsLoaded && window.ActualWidth > 0 && window.ActualHeight > 0;
             }
             catch (Exception exception)
@@ -780,6 +781,78 @@ public sealed class MainWindowRenderingTests
         Assert.AreSame(fiveHourThresholdInput, Keyboard.FocusedElement);
         Assert.IsTrue(fiveHourThresholdInput.IsKeyboardFocusWithin);
         Assert.IsFalse(weeklyThresholdInput.IsKeyboardFocusWithin);
+    }
+
+    private static void AssertThemeUpdatesExistingWindows(MainWindow window, App app)
+    {
+        var directory = Directory.CreateTempSubdirectory("AutoReset-theme-render-");
+        try
+        {
+            var path = Path.Combine(directory.FullName, "config.toml");
+            File.WriteAllText(path, "[desktop]\nappearanceTheme = 'dark'\n[desktop.appearanceDarkChromeTheme]\naccent = '#aabbcc'");
+            var service = new ChatGptThemeService(path, () => false);
+            Assert.IsTrue(service.RefreshAsync().GetAwaiter().GetResult());
+            var popup = new NotificationPopupWindow();
+            service.ApplyTo(app.Resources);
+            service.ApplyTo(window.Resources);
+            service.ApplyTo(popup.Resources);
+            window.UpdateLayout();
+            Assert.AreEqual(Color.FromRgb(24, 24, 24), ((SolidColorBrush)window.Background).Color);
+            var shell = (Border)popup.FindName("PopupShell");
+            Assert.AreEqual(Color.FromRgb(24, 24, 24), ((SolidColorBrush)shell.Background).Color);
+            typeof(App).GetProperty("Appearance", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .SetValue(app, service);
+            var laterPopup = new NotificationPopupWindow();
+            Assert.AreEqual(Color.FromRgb(24, 24, 24), ((SolidColorBrush)((Border)laterPopup.FindName("PopupShell")).Background).Color);
+            var warningBody = (TextBlock)window.FindName("OverallStatusBodyText");
+            Assert.AreEqual(Color.FromRgb(124, 45, 18), ((SolidColorBrush)warningBody.Foreground).Color);
+            var logo = (Image)window.FindName("HeaderWordmark");
+            var popupLogo = (Image)popup.FindName("ResetWordmarkImage");
+            Assert.IsInstanceOfType<System.Windows.Media.Imaging.BitmapSource>(logo.Source);
+            Assert.AreSame(window.Resources["WordmarkImage"], logo.Source);
+            Assert.AreSame(popup.Resources["WordmarkImage"], popupLogo.Source);
+            SaveThemePreview(window, "dark.png");
+            AssertThemeToggle(window, Colors.White, Color.FromRgb(24, 24, 24));
+            File.WriteAllText(path, "[desktop]\nappearanceTheme = 'light'");
+            Assert.IsTrue(service.RefreshAsync().GetAwaiter().GetResult());
+            service.ApplyTo(window.Resources);
+            service.ApplyTo(popup.Resources);
+            Assert.AreEqual(Colors.White, ((SolidColorBrush)window.Background).Color);
+            Assert.AreEqual(Colors.White, ((SolidColorBrush)shell.Background).Color);
+            window.UpdateLayout();
+            AssertThemeToggle(window, Color.FromRgb(26, 28, 31), Colors.White);
+            SaveThemePreview(window, "light.png");
+        }
+        finally { directory.Delete(true); }
+    }
+
+    private static void AssertThemeToggle(MainWindow window, Color trackColor, Color thumbColor)
+    {
+        var toggle = new CheckBox { Style = (Style)window.FindResource("ToggleSwitchStyle"), IsChecked = true };
+        foreach (var key in new[] { "PrimaryTextBrush", "InverseTextBrush", "AccentBrush", "OnAccentBrush" })
+        {
+            toggle.Resources[key] = window.FindResource(key);
+        }
+        toggle.ApplyTemplate();
+        var track = (Border)toggle.Template.FindName("Track", toggle);
+        var thumb = (Ellipse)toggle.Template.FindName("Thumb", toggle);
+        Assert.AreEqual(trackColor, ((SolidColorBrush)track.Background).Color);
+        Assert.AreEqual(thumbColor, ((SolidColorBrush)thumb.Fill).Color);
+    }
+
+    private static void SaveThemePreview(MainWindow window, string name)
+    {
+        var directory = Environment.GetEnvironmentVariable("AUTORESET_TEST_RENDER_DIR");
+        if (string.IsNullOrEmpty(directory)) { return; }
+        Directory.CreateDirectory(directory);
+        var visual = (FrameworkElement)window.Content;
+        var bitmap = new System.Windows.Media.Imaging.RenderTargetBitmap(
+            (int)visual.ActualWidth, (int)visual.ActualHeight, 96, 96, PixelFormats.Pbgra32);
+        bitmap.Render(visual);
+        var encoder = new System.Windows.Media.Imaging.PngBitmapEncoder();
+        encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bitmap));
+        using var output = File.Create(Path.Combine(directory, name));
+        encoder.Save(output);
     }
 
     private static bool RaisePreviewMouseDown(UIElement target)

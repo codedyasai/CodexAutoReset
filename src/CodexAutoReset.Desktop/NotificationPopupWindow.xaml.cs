@@ -12,6 +12,7 @@ public partial class NotificationPopupWindow : Window
     public NotificationPopupWindow()
     {
         InitializeComponent();
+        (System.Windows.Application.Current as App)?.Appearance?.ApplyTo(Resources);
     }
 
     public event EventHandler? ConfirmationRequested;

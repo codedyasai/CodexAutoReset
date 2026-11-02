@@ -45,6 +45,22 @@ public partial class MainWindow : Window
         fiveHourThresholdSaveTimer.Stop();
         AppHeaderGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         SizeChanged += OnWindowSizeChanged;
+        SourceInitialized += (_, _) => ApplyHeaderBackdrop();
+    }
+
+    internal void ApplyHeaderBackdrop()
+    {
+        if ((System.Windows.Application.Current as App)?.Appearance?.Current is not { } theme) { return; }
+        if (NativeHeaderBackdrop.Apply(this, theme.Dark))
+        {
+            Background = System.Windows.Media.Brushes.Transparent;
+            AppHeaderBorder.Background = System.Windows.Media.Brushes.Transparent;
+        }
+        else
+        {
+            SetResourceReference(BackgroundProperty, "AppBackgroundBrush");
+            AppHeaderBorder.SetResourceReference(System.Windows.Controls.Border.BackgroundProperty, "AppBarBrush");
+        }
     }
 
     private bool? compactView;
@@ -193,8 +209,11 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void OnRefreshClick(object sender, RoutedEventArgs eventArgs) =>
-        await viewModel.RefreshNowAsync();
+    private async void OnRefreshClick(object sender, RoutedEventArgs eventArgs)
+    {
+        var appearance = (System.Windows.Application.Current as App)?.RefreshAppearanceAsync() ?? Task.CompletedTask;
+        await Task.WhenAll(viewModel.RefreshNowAsync(), appearance);
+    }
 
     private void OnAlwaysOnTopToggleClick(
         object sender,

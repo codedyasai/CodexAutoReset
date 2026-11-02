@@ -7,8 +7,8 @@
         Height="820"
         MinWidth="320"
         MinHeight="360"
-        Background="{StaticResource AppBackgroundBrush}"
-        Foreground="{StaticResource PrimaryTextBrush}"
+        Background="{DynamicResource AppBackgroundBrush}"
+        Foreground="{DynamicResource PrimaryTextBrush}"
         WindowStartupLocation="CenterScreen"
         UseLayoutRounding="True"
         SnapsToDevicePixels="True"
@@ -21,9 +21,9 @@
             <Setter Property="Height" Value="42" />
             <Setter Property="Margin" Value="16,0,0,0" />
             <Setter Property="VerticalAlignment" Value="Center" />
-            <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}" />
-            <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}" />
+            <Setter Property="Background" Value="{DynamicResource SurfaceBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="FocusVisualStyle" Value="{StaticResource KeyboardFocusVisual}" />
@@ -51,7 +51,7 @@
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="PinButtonBorder"
                                         Property="Background"
-                                        Value="#F0ECE5" />
+                                        Value="{DynamicResource BorderBrush}" />
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="PinButtonBorder"
@@ -61,18 +61,18 @@
                             <Trigger Property="IsChecked" Value="True">
                                 <Setter TargetName="PinButtonBorder"
                                         Property="Background"
-                                        Value="{StaticResource PrimaryTextBrush}" />
+                                        Value="{DynamicResource PrimaryTextBrush}" />
                                 <Setter TargetName="PinButtonBorder"
                                         Property="BorderBrush"
-                                        Value="{StaticResource PrimaryTextBrush}" />
+                                        Value="{DynamicResource PrimaryTextBrush}" />
                                 <Setter TargetName="PinGlyph"
                                         Property="Foreground"
-                                        Value="#FFFFFF" />
+                                        Value="{DynamicResource InverseTextBrush}" />
                             </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
                                 <Setter TargetName="PinButtonBorder"
                                         Property="BorderBrush"
-                                        Value="#1A1C1F" />
+                                        Value="{DynamicResource AccentBrush}" />
                                 <Setter TargetName="PinButtonBorder"
                                         Property="BorderThickness"
                                         Value="2" />
@@ -96,15 +96,15 @@
         </Style>
     </Window.Resources>
 
-    <Grid Background="{StaticResource AppBackgroundBrush}">
+    <Grid Background="Transparent">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
         <Border x:Name="AppHeaderBorder" Grid.Row="0"
-                Background="{StaticResource AppBarBrush}"
-                BorderBrush="{StaticResource BorderBrush}"
+                Background="{DynamicResource AppBarBrush}"
+                BorderBrush="{DynamicResource BorderBrush}"
                 BorderThickness="0,0,0,1"
                 Padding="24,17">
             <Grid x:Name="AppHeaderGrid">
@@ -116,7 +116,7 @@
 
                 <Image x:Name="HeaderWordmark" Width="126"
                        Height="48"
-                       Source="Assets/CodexAutoResetWordmark.png"
+                       Source="{DynamicResource WordmarkImage}"
                        Stretch="Uniform"
                        AutomationProperties.Name="Codex Reset 딱지 워드마크" />
 
@@ -134,7 +134,7 @@
             </Grid>
         </Border>
 
-        <ScrollViewer Grid.Row="1"
+        <ScrollViewer Grid.Row="1" Background="{DynamicResource AppBackgroundBrush}"
                       HorizontalScrollBarVisibility="Disabled"
                       VerticalScrollBarVisibility="Auto"
                       Focusable="False">
@@ -159,8 +159,8 @@
                         <Border x:Name="CodexConnectionPathBox"
                                 Margin="0,18,0,0"
                                 Padding="14,12"
-                                Background="{StaticResource SurfaceBrush}"
-                                BorderBrush="{StaticResource BorderBrush}"
+                                Background="{DynamicResource SurfaceBrush}"
+                                BorderBrush="{DynamicResource BorderBrush}"
                                 BorderThickness="1"
                                 CornerRadius="10">
                             <Grid x:Name="CodexConnectionPathPanel">
@@ -210,7 +210,7 @@
                         </TextBlock>
 
                         <Separator Margin="0,18"
-                                   Background="{StaticResource BorderBrush}" />
+                                   Background="{DynamicResource BorderBrush}" />
 
                         <Grid x:Name="ConnectionStartupPanel">
                             <Grid.ColumnDefinitions>
@@ -314,7 +314,7 @@
                                 <TextBlock Margin="0,5,0,0"
                                            HorizontalAlignment="Center"
                                            FontSize="11"
-                                           Foreground="{StaticResource SecondaryTextBrush}"
+                                           Foreground="{DynamicResource SecondaryTextBrush}"
                                            Text="{Binding RefreshStatusText}"
                                            AutomationProperties.LiveSetting="Polite">
                                     <TextBlock.Style>
@@ -334,7 +334,7 @@
                                     Margin="0,16,0,0">
                             <TextBlock FontSize="14"
                                        FontWeight="SemiBold"
-                                       Foreground="{StaticResource SecondaryTextBrush}"
+                                       Foreground="{DynamicResource SecondaryTextBrush}"
                                        Text="주간 한도 잔여량" />
                             <Grid x:Name="WeeklyUsageValueRow"
                                   Margin="0,5,0,0">
@@ -384,7 +384,7 @@
                         </StackPanel>
 
                         <Separator Margin="0,20"
-                                   Background="{StaticResource BorderBrush}" />
+                                   Background="{DynamicResource BorderBrush}" />
 
                         <Border x:Name="FiveHourUsageCard"
                                 Background="Transparent"
@@ -393,7 +393,7 @@
                             <StackPanel>
                                 <TextBlock FontSize="14"
                                            FontWeight="SemiBold"
-                                           Foreground="{StaticResource SecondaryTextBrush}"
+                                           Foreground="{DynamicResource SecondaryTextBrush}"
                                            Text="5시간 한도 잔여량" />
                                 <Grid x:Name="FiveHourUsageValueRow"
                                       Margin="0,5,0,0">
@@ -452,9 +452,9 @@
                             <Border.Style>
                                 <Style TargetType="Border">
                                     <Setter Property="Background"
-                                            Value="{StaticResource SurfaceBrush}" />
+                                            Value="{DynamicResource SurfaceBrush}" />
                                     <Setter Property="BorderBrush"
-                                            Value="{StaticResource BorderBrush}" />
+                                            Value="{DynamicResource BorderBrush}" />
                                     <Setter Property="Visibility" Value="Collapsed" />
                                     <Style.Triggers>
                                         <DataTrigger Binding="{Binding IsOverallStatusVisible}"
@@ -519,7 +519,11 @@
                                                AutomationProperties.LiveSetting="Polite">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
+                                                <Setter Property="Foreground" Value="{DynamicResource PrimaryTextBrush}" />
                                                 <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsCompatibilityWarning}" Value="True">
+                                                        <Setter Property="Foreground" Value="#7C2D12" />
+                                                    </DataTrigger>
                                                     <DataTrigger Binding="{Binding IsOverallStatusTitleVisible}"
                                                                  Value="True">
                                                         <Setter Property="Margin" Value="0,5,0,0" />
@@ -574,7 +578,7 @@
                                             <DataTemplate>
                                                 <TextBlock Margin="0,0,8,4"
                                                            Style="{StaticResource CaptionTextStyle}"
-                                                           Foreground="{StaticResource PrimaryTextBrush}"
+                                                           Foreground="{DynamicResource PrimaryTextBrush}"
                                                            Text="{Binding}"
                                                            TextWrapping="Wrap" />
                                             </DataTemplate>
@@ -609,12 +613,12 @@
 
                             <Separator Grid.Row="2"
                                        Margin="0,18"
-                                       Background="{StaticResource BorderBrush}" />
+                                       Background="{DynamicResource BorderBrush}" />
 
                             <StackPanel Grid.Row="3">
                                 <TextBlock FontSize="14"
                                            FontWeight="SemiBold"
-                                           Foreground="{StaticResource SecondaryTextBrush}"
+                                           Foreground="{DynamicResource SecondaryTextBrush}"
                                            Text="초기화권 자동 사용 설정" />
                                 <TextBlock Margin="0,4,0,0"
                                            Style="{StaticResource CaptionTextStyle}"
@@ -677,7 +681,7 @@
 
                                     <Separator Grid.Row="1"
                                                Margin="0,14"
-                                               Background="{StaticResource BorderBrush}" />
+                                               Background="{DynamicResource BorderBrush}" />
 
                                     <Grid x:Name="InlineFiveHourAutomationRow"
                                           Grid.Row="2">
@@ -728,7 +732,7 @@
                                 </Grid>
 
                                 <TextBlock Margin="0,12,0,0"
-                                           Foreground="{StaticResource SecondaryTextBrush}"
+                                           Foreground="{DynamicResource SecondaryTextBrush}"
                                            Text="{Binding SaveStatus}"
                                            TextWrapping="Wrap"
                                            AutomationProperties.LiveSetting="Polite">

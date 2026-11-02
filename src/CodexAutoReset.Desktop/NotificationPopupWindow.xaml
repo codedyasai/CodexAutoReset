@@ -21,6 +21,7 @@
         KeyboardNavigation.TabNavigation="Cycle"
         AutomationProperties.Name="CodexAutoReset 알림">
     <Window.Resources>
+        <BitmapImage x:Key="WordmarkImage" UriSource="Assets/CodexAutoResetWordmark.png" />
         <SolidColorBrush x:Key="PopupBackgroundBrush" Color="#F8F2E8" />
         <SolidColorBrush x:Key="PopupCardBrush" Color="#FFFFFF" />
         <SolidColorBrush x:Key="PopupSurfaceBrush" Color="#FAFAF9" />
@@ -33,7 +34,7 @@
                 <Setter.Value>
                     <ControlTemplate>
                         <Rectangle Margin="2"
-                                   Stroke="#1A1C1F"
+                                   Stroke="{DynamicResource AccentBrush}"
                                    StrokeThickness="2"
                                    StrokeDashArray="1 1"
                                    SnapsToDevicePixels="True" />
@@ -49,9 +50,9 @@
             <Setter Property="FontFamily" Value="Segoe UI" />
             <Setter Property="FontSize" Value="14" />
             <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="Foreground" Value="{StaticResource PopupTextBrush}" />
-            <Setter Property="Background" Value="{StaticResource PopupSurfaceBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource PopupBorderBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource PopupTextBrush}" />
+            <Setter Property="Background" Value="{DynamicResource PopupSurfaceBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource PopupBorderBrush}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="FocusVisualStyle"
@@ -87,7 +88,7 @@
                             <Trigger Property="IsKeyboardFocused" Value="True">
                                 <Setter TargetName="ButtonBorder"
                                         Property="BorderBrush"
-                                        Value="#1A1C1F" />
+                                        Value="{DynamicResource AccentBrush}" />
                                 <Setter TargetName="ButtonBorder"
                                         Property="BorderThickness"
                                         Value="2" />
@@ -105,7 +106,7 @@
             <Setter Property="FontFamily" Value="Segoe UI Symbol" />
             <Setter Property="FontSize" Value="21" />
             <Setter Property="FontWeight" Value="Normal" />
-            <Setter Property="Foreground" Value="{StaticResource PopupTextBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource PopupTextBrush}" />
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Cursor" Value="Hand" />
@@ -130,12 +131,12 @@
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="CloseButtonBackground"
                                         Property="Background"
-                                        Value="#EAE4DA" />
+                                        Value="{DynamicResource PopupBorderBrush}" />
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="CloseButtonBackground"
                                         Property="Background"
-                                        Value="#DDD6CC" />
+                                        Value="{DynamicResource PopupBorderBrush}" />
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter TargetName="CloseButtonBackground"
@@ -152,8 +153,8 @@
     <Border x:Name="PopupShell"
             Margin="12"
             Padding="16"
-            Background="{StaticResource PopupBackgroundBrush}"
-            BorderBrush="{StaticResource PopupBorderBrush}"
+            Background="{DynamicResource PopupBackgroundBrush}"
+            BorderBrush="{DynamicResource PopupBorderBrush}"
             BorderThickness="1"
             CornerRadius="18">
         <Border.Effect>
@@ -180,7 +181,7 @@
                 <Image x:Name="ResetWordmarkImage"
                        Width="126"
                        Height="48"
-                       Source="Assets/CodexAutoResetWordmark.png"
+                       Source="{DynamicResource WordmarkImage}"
                        Stretch="Uniform"
                        AutomationProperties.Name="Codex Reset 딱지 워드마크" />
 
@@ -197,8 +198,8 @@
             <Border x:Name="NotificationCard"
                     Grid.Row="1"
                     Padding="20"
-                    Background="{StaticResource PopupCardBrush}"
-                    BorderBrush="{StaticResource PopupBorderBrush}"
+                    Background="{DynamicResource PopupCardBrush}"
+                    BorderBrush="{DynamicResource PopupBorderBrush}"
                     BorderThickness="1"
                     CornerRadius="14">
                 <Grid>
@@ -214,7 +215,7 @@
                                    FontFamily="Segoe UI"
                                    FontSize="19"
                                    FontWeight="SemiBold"
-                                   Foreground="{StaticResource PopupTextBrush}"
+                                   Foreground="{DynamicResource PopupTextBrush}"
                                    TextWrapping="Wrap"
                                    AutomationProperties.HeadingLevel="Level1"
                                    AutomationProperties.LiveSetting="Polite" />
@@ -228,7 +229,7 @@
                                            FontFamily="Segoe UI"
                                            FontSize="14"
                                            LineHeight="21"
-                                           Foreground="{StaticResource PopupTextBrush}"
+                                           Foreground="{DynamicResource PopupTextBrush}"
                                            TextWrapping="Wrap"
                                            AutomationProperties.LiveSetting="Polite" />
                                 <TextBlock x:Name="NotificationDetailText"
@@ -236,7 +237,7 @@
                                            FontFamily="Segoe UI"
                                            FontSize="13"
                                            LineHeight="20"
-                                           Foreground="{StaticResource PopupSecondaryTextBrush}"
+                                           Foreground="{DynamicResource PopupSecondaryTextBrush}"
                                            TextWrapping="Wrap" />
                             </StackPanel>
                         </ScrollViewer>
@@ -245,7 +246,7 @@
                     <Border Grid.Row="1"
                             Height="1"
                             Margin="0,18,0,16"
-                            Background="{StaticResource PopupBorderBrush}" />
+                            Background="{DynamicResource PopupBorderBrush}" />
 
                     <TextBlock x:Name="ConfirmationFailureText"
                                Grid.Row="2"
@@ -253,7 +254,7 @@
                                FontFamily="Segoe UI"
                                FontSize="13"
                                LineHeight="19"
-                               Foreground="{StaticResource PopupTextBrush}"
+                               Foreground="{DynamicResource PopupTextBrush}"
                                Text="알림을 닫은 상태를 저장하지 못했습니다. X를 다시 눌러 주세요."
                                TextWrapping="Wrap"
                                Visibility="Collapsed"

@@ -702,6 +702,17 @@ public sealed class MainWindowRenderingTests
                 Assert.IsTrue(refreshPanel.TranslatePoint(
                     new Point(refreshPanel.ActualWidth, 0), appHeaderGrid).X <= appHeaderGrid.ActualWidth + 0.5);
                 Assert.IsTrue(usageCard.ActualWidth <= window.ActualWidth);
+                window.Height = 1000;
+                window.UpdateLayout();
+                Assert.AreEqual(Visibility.Visible, creditManagementCard.Visibility,
+                    $"Tall compact windows must expose the credit inventory. Window={window.ActualHeight}, Usage={usageCard.ActualHeight}, Scroll={((ScrollViewer)window.FindName("MainScrollViewer")).ActualHeight}");
+                Assert.IsFalse(creditNotificationPanel.IsVisible);
+                Assert.IsFalse(weeklyAutomationToggle.IsVisible);
+                Assert.IsFalse(fiveHourAutomationToggle.IsVisible);
+                Assert.IsTrue(((ScrollViewer)window.FindName("CreditExpirationScrollViewer")).IsVisible);
+                window.Height = window.MinHeight;
+                window.UpdateLayout();
+                Assert.AreEqual(Visibility.Collapsed, creditManagementCard.Visibility);
                 window.Width = configuredWindowWidth;
                 window.Height = configuredWindowHeight;
                 window.UpdateLayout();

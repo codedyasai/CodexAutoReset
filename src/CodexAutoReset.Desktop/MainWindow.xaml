@@ -134,7 +134,7 @@
             </Grid>
         </Border>
 
-        <ScrollViewer Grid.Row="1" Background="{DynamicResource AppBackgroundBrush}"
+        <ScrollViewer x:Name="MainScrollViewer" Grid.Row="1" Background="{DynamicResource AppBackgroundBrush}"
                       HorizontalScrollBarVisibility="Disabled"
                       VerticalScrollBarVisibility="Auto"
                       Focusable="False">
@@ -611,11 +611,11 @@
                                 </Grid>
                             </Grid>
 
-                            <Separator Grid.Row="2"
+                            <Separator x:Name="CreditAutomationSeparator" Grid.Row="2"
                                        Margin="0,18"
                                        Background="{DynamicResource BorderBrush}" />
 
-                            <StackPanel Grid.Row="3">
+                            <StackPanel x:Name="CreditAutomationSettings" Grid.Row="3">
                                 <TextBlock FontSize="14"
                                            FontWeight="SemiBold"
                                            Foreground="{DynamicResource SecondaryTextBrush}"

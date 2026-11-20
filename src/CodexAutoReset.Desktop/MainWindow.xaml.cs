@@ -45,6 +45,7 @@ public partial class MainWindow : Window
         fiveHourThresholdSaveTimer.Stop();
         AppHeaderGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         SizeChanged += OnWindowSizeChanged;
+        LayoutUpdated += (_, _) => UpdateCompactCreditInventory();
         SourceInitialized += (_, _) => ApplyHeaderBackdrop();
     }
 
@@ -65,6 +66,23 @@ public partial class MainWindow : Window
 
     private bool? compactView;
 
+    private void UpdateCompactCreditInventory()
+    {
+        if (compactView != true) { return; }
+        var available = MainScrollViewer.ActualHeight - MainContentGrid.Margin.Top
+            - MainContentGrid.Margin.Bottom - UsageOverviewCard.ActualHeight
+            - UsageOverviewCard.Margin.Top - UsageOverviewCard.Margin.Bottom
+            - CreditManagementCard.Margin.Top - CreditManagementCard.Margin.Bottom;
+        // Reserve a heading, padding and at least three short inventory lines.
+        var show = available >= 160;
+        CreditManagementCard.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        var listHeight = Math.Max(64, Math.Floor(available - 96));
+        if (Math.Abs(CreditExpirationScrollViewer.Height - listHeight) > .5)
+        {
+            CreditExpirationScrollViewer.Height = listHeight;
+        }
+    }
+
     private void OnWindowSizeChanged(object sender, SizeChangedEventArgs eventArgs)
     {
         // The full settings rows require the original 680 DIP minimum width.
@@ -78,6 +96,12 @@ public partial class MainWindow : Window
         var fullVisibility = compact ? Visibility.Collapsed : Visibility.Visible;
         CodexConnectionCard.Visibility = fullVisibility;
         CreditManagementCard.Visibility = fullVisibility;
+        CreditGrantedNotificationPanel.Visibility = fullVisibility;
+        CreditAutomationSettings.Visibility = fullVisibility;
+        CreditAutomationSeparator.Visibility = fullVisibility;
+        CreditExpirationScrollViewer.Height = 64;
+        if (compact) { CreditManagementCard.Padding = new Thickness(16); }
+        else { CreditManagementCard.ClearValue(PaddingProperty); }
         WeeklyResetNotificationPanel.Visibility = fullVisibility;
         FiveHourResetNotificationPanel.Visibility = fullVisibility;
         HeaderDescription.Visibility = fullVisibility;
